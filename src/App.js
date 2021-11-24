@@ -9,8 +9,8 @@ function Copyright() {
   return (
     <Typography variant="body2" color="text.secondary" align="center">
       {'Copyright © '}
-      <Link color="inherit" href="https://mui.com/">
-        Your Website
+      <Link color="inherit" href="https://decentespresso.com">
+        decentespresso.com
       </Link>{' '}
       {new Date().getFullYear()}
       {'.'}
@@ -23,7 +23,7 @@ export default function App() {
     <Container maxWidth="sm">
       <Box sx={{ my: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>
-          Create React App v5 example
+          DE1 Support App V0.0
         </Typography>
         <ProTip />
         <Copyright />

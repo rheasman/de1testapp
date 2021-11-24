@@ -18,9 +18,6 @@ import MenuIcon from '@mui/icons-material/Menu';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 // import NotificationsIcon from '@mui/icons-material/Notifications';
 import { mainListItems, secondaryListItems } from './listItems';
-import Chart from './Chart';
-import Deposits from './Deposits';
-import Orders from './Orders';
 import Updater from './Updater';
 import Devices from './Devices';
 
@@ -163,20 +160,20 @@ function DashboardContent() {
           <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
             <Grid container spacing={3}>
               {/* Updater */}
-              <Grid item xs={12} md={8} lg={9}>
+              <Grid item xs={12}>
                 <Paper
                   sx={{
                     p: 2,
                     display: 'flex',
                     flexDirection: 'column',
-                    height: 240,
+                    height: 120,
                   }}
                 >
                   <Updater />
                 </Paper>
               </Grid>
               {/* Devices */}
-              <Grid item xs={12} md={4} lg={3}>
+              <Grid item xs={12}>
                 <Paper
                   sx={{
                     p: 2,

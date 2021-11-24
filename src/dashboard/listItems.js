@@ -27,9 +27,6 @@ export default class ListItems extends React.Component {
   }
 
   makeListItem(details) {
-    activeitem = this.state.draweritems[this.state.activeItem];
-    active = (details === activeitem);
-
     return (
       <ListItem key={details[0]}>
         <ListItemIcon>
@@ -43,6 +40,7 @@ export default class ListItems extends React.Component {
   // We want to show the current status: Connecting, uploading, disconnecting, done.
   // Also want a progress bar.
   render() {
+    return ""
   }
 }
 
