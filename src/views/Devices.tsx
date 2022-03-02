@@ -8,13 +8,15 @@ import TableRow from '@mui/material/TableRow';
 import Title from './Title';
 import { E_Status, NotifyCallbackType } from '../models/KeyStore';
 import KeyStore from '../models/KeyStore';
-import { DeviceMap } from '../controllers/BLE';
-import { ConnectWithoutContactSharp, DoNotDisturbOnSharp, RadarSharp } from '@mui/icons-material';
-import { Button, Icon, IconButton } from '@mui/material';
+import { I_BLEResponseCallback, DeviceMap, T_IncomingMsg, T_Request, T_ConnectionState } from '../controllers/BLE';
+import { ConnectWithoutContactSharp, DoNotDisturbOnSharp, RadarSharp, BluetoothConnectedSharp } from '@mui/icons-material';
+import { IconButton } from '@mui/material';
+import { AppController } from '../controllers/AppController';
 
 type RowDataType = {
   addr : string,
-  name : string
+  name : string,
+  cstate : T_ConnectionState
 }
 
 function row_compare(a: RowDataType, b: RowDataType): number {
@@ -40,29 +42,32 @@ class Devices extends Component<MyProps, MyState> {
     console.log("Devices()");
     console.log("props:", props);
     this.state = {
-      rows : [this.createData("","")]
+      rows : [this.createData("","", "DISCONNECTED")]
     }
     console.log("this.state:", this.state);
   }
 
   componentDidMount() {
-    KeyStore.instance.requestNotifyOnChanged(this.props.name, "DeviceSet", this.onDeviceChange)
+    KeyStore.getInstance().requestNotifyOnChanged(this.props.name, "DeviceSet", this.onDeviceChange)
     this.setState({rows : this.rowsFromStore()})
   }
 
   componentWillUnmount() {
-    KeyStore.instance.cancelNotify(this.props.name, "DeviceSet", this.onDeviceChange)
+    KeyStore.getInstance().cancelNotify(this.props.name, "DeviceSet", this.onDeviceChange)
   }
 
-  onDeviceChange : NotifyCallbackType = (owner, key, status, before, after)  => {
+  onDeviceChange : NotifyCallbackType = (owner, key, status, before, after : DeviceMap): void  => {
     console.log("onDeviceChange:", owner, key, status, before, after)
 
     // "after" will be the DeviceSet
     if ((status === E_Status.Changed) || (status === E_Status.Added)) {
       let darr = [];
       for (var device of after.keys()) {
-        darr.push(this.createData(device.addr, device.name));
-      }
+        const dev = after.get(device);
+        if (dev) {
+          darr.push(this.createData(dev.MAC, dev.Name, dev.State));
+        }
+      } 
       darr.sort(row_compare);
       this.setState({ rows: darr });
     }
@@ -70,39 +75,66 @@ class Devices extends Component<MyProps, MyState> {
 
   rowsFromStore(): RowDataType[] {
     let darr = [];
-    let devices : DeviceMap = KeyStore.instance.readKey(this.props.name, "DeviceSet");
+    let devices : DeviceMap = KeyStore.getInstance().readKey(this.props.name, "DeviceSet");
     if (devices !== undefined) {
       for (var device of devices.keys()) {
-        darr.push(this.createData(device.addr, device.name));
+        const dev = devices.get(device);
+        if (dev) {
+          darr.push(this.createData(dev.MAC, dev.Name, dev.State));
+        }
       }
       darr.sort(row_compare);  
     } else {
-      darr.push(this.createData("-", "-"));
+      darr.push(this.createData("-", "-", "DISCONNECTED"));
     }
     //this.setState({ rows: darr });
     return darr;
   }
 
-  addDevice(addr: string, name: string) {
-    this.state.rows.push(this.createData(addr, name))
+  addDevice(addr: string, name: string, cstate: T_ConnectionState) {
+    this.state.rows.push(this.createData(addr, name, cstate))
   }
 
-  createData(addr: string, name: string): RowDataType {
-    return { addr, name };
+  createData(addr: string, name: string, cstate : T_ConnectionState): RowDataType {
+    return { addr, name, cstate };
   }
 
   preventDefault(event: any) {
     event.preventDefault();
   }
+
+  disconnect(name : string, addr : string) {
+    console.log("Device onClick() disconnect from ", name, addr)
+    const discb : I_BLEResponseCallback = (request : T_Request, response : T_IncomingMsg) : boolean => {
+      console.log("Devices: Disconnect: ", response)
+      return false;
+    }
+    AppController.BLE0.requestGATTDisconnect(addr, discb);
+  }
   
-  connectIcon(name : string): JSX.Element {
+  connect(name : string, addr : string) {
+    console.log("Device onClick() connect to ", name, addr)
+    AppController.getInstance().requestConnect(addr);
+  }
+
+  connectIcon(name : string, addr : string, cstate : T_ConnectionState): JSX.Element {
     if (name === "DE1") {
-      return (
-        <TableCell><IconButton><ConnectWithoutContactSharp /></IconButton></TableCell>
-      )
+      if (cstate != "CONNECTED") {
+        return (
+          <TableCell><IconButton onClick={ () => {this.connect(name, addr)} }><ConnectWithoutContactSharp /></IconButton></TableCell>
+        )  
+      } else {
+        return (
+          <TableCell><IconButton onClick={ () => {this.disconnect(name, addr)} }><BluetoothConnectedSharp /></IconButton></TableCell>
+        )  
+      }
     } else {
       return (<TableCell><IconButton><DoNotDisturbOnSharp /></IconButton></TableCell>)
     }
+  }
+
+  reqScan() {
+    AppController.BLE0.requestScanWithCallbacks(6, null);
   }
 
   render() { 
@@ -122,12 +154,12 @@ class Devices extends Component<MyProps, MyState> {
               <TableRow key={row.addr}>
                 <TableCell>{row.name}</TableCell>
                 <TableCell>{row.addr}</TableCell>
-                {this.connectIcon(row.name)}
+                {this.connectIcon(row.name, row.addr, row.cstate)}
               </TableRow>
             ))}
           </TableBody>
         </Table>
-        <IconButton><RadarSharp /></IconButton>
+        <IconButton onClick={this.reqScan}><RadarSharp />Scan</IconButton>
       </React.Fragment>
     );
   }

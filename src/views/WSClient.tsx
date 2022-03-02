@@ -22,15 +22,15 @@ class WSClient extends Component<WSProps, WSState> {
   }
 
   componentDidMount() {
-    KeyStore.instance.requestNotifyOnChanged(this.props.name, "url", this.onControllerChange)
-    KeyStore.instance.requestNotifyOnChanged(this.props.name, "readyState", this.onControllerChange)
+    KeyStore.getInstance().requestNotifyOnChanged(this.props.name, "url", this.onControllerChange)
+    KeyStore.getInstance().requestNotifyOnChanged(this.props.name, "readyState", this.onControllerChange)
     this.updateStateFromStore();
   }
 
   componentWillUnmount() {
     console.log("WSClient.componentWillUnmount");
-    KeyStore.instance.cancelNotify(this.props.name, "url", this.onControllerChange);
-    KeyStore.instance.cancelNotify(this.props.name, "readyState", this.onControllerChange);
+    KeyStore.getInstance().cancelNotify(this.props.name, "url", this.onControllerChange);
+    KeyStore.getInstance().cancelNotify(this.props.name, "readyState", this.onControllerChange);
   }
 
   onControllerChange : NotifyCallbackType = (owner, key, status, before, after) => {
@@ -40,8 +40,8 @@ class WSClient extends Component<WSProps, WSState> {
 
   updateStateFromStore() {
     this.setState({ 
-      url : KeyStore.instance.readKey(this.props.name, "url"),
-      readyState : KeyStore.instance.readKey(this.props.name, "readyState")
+      url : KeyStore.getInstance().readKey(this.props.name, "url"),
+      readyState : KeyStore.getInstance().readKey(this.props.name, "readyState")
     });
   }
   render() {

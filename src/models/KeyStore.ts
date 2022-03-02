@@ -25,14 +25,44 @@ type NotifyOwnerDictType = Map<string, NotifyItemType>
 
 /**
  * KeyStore is intended to be used as a singleton!
- * Grab your instance from KeyStore.instance
+ * Grab your instance from KeyStore.getInstance()
+ * 
+ * 
+ * There are 'listeners' which are notified when keys are changed, and 'broadcasters' that update a key. There are
+ * also 'owners' that created a key.
+ * 
+ * How to use the KeyStore, if you are registering to just listen:
+ * 
+ * 1. When your component mounts/is created, call requestNotifyOnChanged() for keys you want to monitor.
+ *    You DO NOT have to register a notify in order to be able to read a key.
+ * 2. Every change of a key generates a callback, so be cautious about doing too much work on a callback.
+ *    Ideally, rather use a key that is updated sparingly, when major state changes occur, and only notify on that.
+ * 3. When your component unmounts/disappears, be sure to cancelNotify90 on all keys.
+ * 
+ * If you 'own' some keys:
+ * 1. When your component mounts/is created, call updateKey() to create the key.
+ * 2. Update keys as required using updateKey().
+ * 3. When your component is going away, either delKey() each key, or just call delOwnerKeys() to remove
+ *    all the keys you own. Listeners will be notified when a key is deleted.
+ * 
+ * If you are broadcasting on keys:
+ * 1. Call updateKey() to update a key. If the key data has a deep change that won't show up with a shallow
+ *    compare, force an update.
+ * 2. Try not to create any unintentional infinite loops by changing keys that cause you to be notified. :-)
+ * 
+ * You can mix and match on any of the above scenarios, but for your own sanity I suggest that only the owner
+ * change a key. For bidirectional communications, use two keys. Do not have multiple entities changing the
+ * same key!
  */
-class KeyStore  {
+export class KeyStore  {
   // @ts-expect-error
-  static instance : KeyStore = KeyStore.instance || new KeyStore();
+  private static instance : KeyStore = KeyStore.instance || new KeyStore();
 
-  // Syntactic sugar if you prefer it
-  getInstance() {
+  constructor() {
+    console.log("******************** KeyStore constructor()");
+  }
+  
+  public static getInstance(): KeyStore {
     return KeyStore.instance;
   }
 
