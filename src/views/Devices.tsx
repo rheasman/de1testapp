@@ -8,7 +8,8 @@ import TableRow from '@mui/material/TableRow';
 import Title from './Title';
 import { E_Status, NotifyCallbackType } from '../models/KeyStore';
 import KeyStore from '../models/KeyStore';
-import { I_BLEResponseCallback, DeviceMap, T_IncomingMsg, T_Request, T_ConnectionState } from '../controllers/BLE';
+import { I_BLEResponseCallback, DeviceMap } from '../controllers/BLE';
+import { T_IncomingMsg, T_Request, T_ConnectionState } from "../controllers/MessageMaker";
 import { ConnectWithoutContactSharp, DoNotDisturbOnSharp, RadarSharp, BluetoothConnectedSharp } from '@mui/icons-material';
 import { IconButton } from '@mui/material';
 import { AppController } from '../controllers/AppController';
@@ -119,7 +120,7 @@ class Devices extends Component<MyProps, MyState> {
 
   connectIcon(name : string, addr : string, cstate : T_ConnectionState): JSX.Element {
     if (name === "DE1") {
-      if (cstate != "CONNECTED") {
+      if (cstate !== "CONNECTED") {
         return (
           <TableCell><IconButton onClick={ () => {this.connect(name, addr)} }><ConnectWithoutContactSharp /></IconButton></TableCell>
         )  

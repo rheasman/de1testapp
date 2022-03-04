@@ -104,7 +104,7 @@ export class WSClientController {
       this.WS = new WebSocket(this.URL);
     }
 
-    if ( (this.WS.readyState == WebSocket.CLOSED) || (this.WS.readyState == WebSocket.CLOSING) ) {
+    if ( (this.WS.readyState === WebSocket.CLOSED) || (this.WS.readyState === WebSocket.CLOSING) ) {
       this.WS = new WebSocket(this.URL);
     }
     this.WS.onopen = this._on_open

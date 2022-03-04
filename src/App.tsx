@@ -52,7 +52,6 @@ class App extends React.Component<AppProps, AppState> {
     console.log("cdm: ", this);
     draweritems.forEach((item: T_DrawerItem) => {AppController.getInstance().dashcontroller.addDrawer(item[0], item[1], this.toDrawerContentType(item[2]))});
     AppController.getInstance().dashcontroller.setActiveDrawer("Devices");
-    AppController.getInstance().start();
   }
  
   toDrawerContentType(inputarr : T_DrawerContent[]): DrawerContentType[] {

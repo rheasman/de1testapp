@@ -3,6 +3,7 @@ import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider } from '@mui/material/styles';
 import theme from './theme';
 import App from './App';
+import { AppController } from './controllers/AppController';
 
 ReactDOM.render(
   <ThemeProvider theme={theme}>
@@ -12,3 +13,5 @@ ReactDOM.render(
   </ThemeProvider>,
   document.querySelector('#root'),
 );
+
+AppController.getInstance().run();

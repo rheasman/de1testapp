@@ -1,6 +1,6 @@
 import * as React from "react";
 import { AppController } from "../controllers/AppController";
-import { T_ConnectionState } from "../controllers/BLE";
+import { T_ConnectionState } from "../controllers/MessageMaker";
 
 type T_DE1InfoState = {
   cstate : T_ConnectionState
