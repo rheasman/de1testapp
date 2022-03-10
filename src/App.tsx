@@ -5,10 +5,11 @@ import DashboardIcon from '@mui/icons-material/Dashboard';
 import BluetoothSearchingIcon from '@mui/icons-material/BluetoothSearching';
 import Devices from "./views/Devices";
 import Updater from "./views/Updater";
-import { DashboardController, DrawerContentType } from "./controllers/DashboardController";
+import { DrawerContentType } from "./controllers/DashboardController";
 import WSClient from "./views/WSClient";
 import { HardwareSharp, TableRowsSharp } from "@mui/icons-material";
 import { DE1Info } from "./views/DE1Info";
+import { UserMenu } from "./views/UserMenu";
 
 interface AppProps {
   
@@ -17,7 +18,7 @@ interface AppProps {
 interface AppState {
 }
 
-type T_DrawerContent = [string, JSX.Element]
+type T_DrawerContent = [string, JSX.Element, boolean]
 type T_DrawerItem = [string, any, T_DrawerContent[]];
 
 /**
@@ -27,10 +28,25 @@ type T_DrawerItem = [string, any, T_DrawerContent[]];
  *                  V
  */
 const draweritems: T_DrawerItem[] = [
-  ["Firmware", <HardwareSharp />, [["Updater", <Updater />]]],
-  ["Status", <DashboardIcon />, [["WSClient", <WSClient name="wsc_BLE0"/>]]],
-  ["Devices", <BluetoothSearchingIcon />, [["DE1Info", <DE1Info mac=""/>], ["Devices", <Devices name="BLE0"/>], ["WSClient", <WSClient name="wsc_BLE0"/>]]]
-  // ["MMRs", <TableRowsSharp />, [["MMRs", <MMR_UI />]]
+  ["Firmware", <HardwareSharp />,
+    [
+      ["Updater", <Updater />, false]
+    ]
+  ],
+  ["Status", <DashboardIcon />,
+    [
+      ["WSClient", <WSClient name="wsc_BLE0"/>, true]
+    ]
+  ],
+  ["Devices", <BluetoothSearchingIcon />, 
+    [
+      ["UserMenu", <UserMenu />, false],
+      ["DE1Info", <DE1Info mac=""/>, false],
+      ["Devices", <Devices name="BLE0"/>, true],
+      ["WSClient", <WSClient name="wsc_BLE0"/>, true],
+    ]
+  ]
+  // ["MMRs", <TableRowsSharp />, [["MMRs", <MMR_UI />, false]]
 ]
 
 /**
@@ -56,13 +72,13 @@ class App extends React.Component<AppProps, AppState> {
  
   toDrawerContentType(inputarr : T_DrawerContent[]): DrawerContentType[] {
     return inputarr.map((val) => {
-      return { name: val[0], item: val[1]};
+      return { name: val[0], item: val[1], visible: val[2] };
     })
   }
 
   render() { 
     return (
-      <div><Dashboard controller={AppController.getInstance().dashcontroller}/></div>
+      <Dashboard controller={AppController.getInstance().dashcontroller}/>
     );
   }
 }

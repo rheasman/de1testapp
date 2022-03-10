@@ -11,8 +11,10 @@ import KeyStore from '../models/KeyStore';
 import { I_BLEResponseCallback, DeviceMap } from '../controllers/BLE';
 import { T_IncomingMsg, T_Request, T_ConnectionState } from "../controllers/MessageMaker";
 import { ConnectWithoutContactSharp, DoNotDisturbOnSharp, RadarSharp, BluetoothConnectedSharp } from '@mui/icons-material';
-import { IconButton } from '@mui/material';
-import { AppController } from '../controllers/AppController';
+import { Box, CircularProgress, IconButton, Stack } from '@mui/material';
+import { AppController, T_AppMachineState } from '../controllers/AppController';
+import "./Devices.css";
+import { height, width } from '@mui/system';
 
 type RowDataType = {
   addr : string,
@@ -29,6 +31,7 @@ function row_compare(a: RowDataType, b: RowDataType): number {
 
 type MyState = {
   rows : RowDataType[];
+  allowConnect : boolean;
 }
 
 type MyProps = {
@@ -43,18 +46,31 @@ class Devices extends Component<MyProps, MyState> {
     console.log("Devices()");
     console.log("props:", props);
     this.state = {
-      rows : [this.createData("","", "DISCONNECTED")]
+      rows : [this.createData("","", "DISCONNECTED")],
+      allowConnect : false
     }
     console.log("this.state:", this.state);
   }
 
   componentDidMount() {
     KeyStore.getInstance().requestNotifyOnChanged(this.props.name, "DeviceSet", this.onDeviceChange)
-    this.setState({rows : this.rowsFromStore()})
+    KeyStore.getInstance().requestNotifyOnChanged("AppController", "AppMachineState", this.onStateChange)
+    this.setState({rows : this.rowsFromStore(), allowConnect: false})
   }
 
   componentWillUnmount() {
     KeyStore.getInstance().cancelNotify(this.props.name, "DeviceSet", this.onDeviceChange)
+    KeyStore.getInstance().cancelNotify("AppController", "AppMachineState", this.onStateChange)
+  }
+
+  onStateChange : NotifyCallbackType = (owner, key, status, before, after : T_AppMachineState): void  => {
+    console.log("onStateChange:", owner, key, status, before, after)
+
+    if (after === "SelectDE1") {
+      this.setState({allowConnect : true})
+    } else {
+      this.setState({allowConnect : false})
+    }
   }
 
   onDeviceChange : NotifyCallbackType = (owner, key, status, before, after : DeviceMap): void  => {
@@ -119,28 +135,78 @@ class Devices extends Component<MyProps, MyState> {
   }
 
   connectIcon(name : string, addr : string, cstate : T_ConnectionState): JSX.Element {
+    var buttonstyle={width: '24px', height: '24px', margin: '5px'};
+
     if (name === "DE1") {
       if (cstate !== "CONNECTED") {
-        return (
-          <TableCell><IconButton onClick={ () => {this.connect(name, addr)} }><ConnectWithoutContactSharp /></IconButton></TableCell>
-        )  
+        if (this.state.allowConnect) {
+          // A button that allows connecting
+          return (
+            <TableCell>
+              <div className="cell-button">
+                <IconButton onClick={ () => {this.connect(name, addr)} }>
+                  <ConnectWithoutContactSharp />
+                </IconButton>
+              </div>
+            </TableCell>
+          )    
+        } else {
+          return (
+            // A button that shows we are not ready to connect
+            <TableCell>
+              <div className="cell-button" >
+                <CircularProgress style={buttonstyle}/>
+              </div>
+            </TableCell>
+          )
+        }
       } else {
         return (
-          <TableCell><IconButton onClick={ () => {this.disconnect(name, addr)} }><BluetoothConnectedSharp /></IconButton></TableCell>
+          // A button that shows we are connected
+          <TableCell>
+            <div className="cell-button">
+              <IconButton onClick={ () => {this.disconnect(name, addr)} } style={buttonstyle}>
+                <BluetoothConnectedSharp/>
+              </IconButton>
+            </div>    
+          </TableCell>
         )  
       }
     } else {
-      return (<TableCell><IconButton><DoNotDisturbOnSharp /></IconButton></TableCell>)
+      return (
+        <TableCell>
+          <div className="cell-button">        
+            <IconButton style={buttonstyle}>
+              <DoNotDisturbOnSharp />
+            </IconButton>
+          </div>
+        </TableCell>
+      )
     }
   }
 
   reqScan() {
-    AppController.BLE0.requestScanWithCallbacks(6, null);
+    // AppController.BLE0.requestScanWithCallbacks(6, null);
+    AppController.getInstance().sendEventToSM({type: "EV_ReqScan"});
   }
 
   render() { 
+    var scan;
+    
+    if (this.state.allowConnect) {
+      scan = (
+        <div className='scan'>
+          <IconButton onClick={this.reqScan}><RadarSharp />Scan</IconButton>
+        </div>
+      )
+    } else {
+      scan = (
+        <CircularProgress /> // style={{width: '30px', height: '30px', margin: '5px'}}/>
+      )
+    };
+
     return (
-      <React.Fragment>
+      <div className='device-card'>
         <Title>Seen Devices</Title>
         <Table size="small">
           <TableHead>
@@ -160,10 +226,24 @@ class Devices extends Component<MyProps, MyState> {
             ))}
           </TableBody>
         </Table>
-        <IconButton onClick={this.reqScan}><RadarSharp />Scan</IconButton>
-      </React.Fragment>
-    );
+        {scan}
+      </div> 
+    )
   }
 }
  
 export default Devices;
+
+/*
+import * as React from 'react';
+import CircularProgress from '@mui/material/CircularProgress';
+import Box from '@mui/material/Box';
+
+export default function CircularIndeterminate() {
+  return (
+    <Box sx={{ display: 'flex' }}>
+      <CircularProgress />
+    </Box>
+  );
+}
+*/

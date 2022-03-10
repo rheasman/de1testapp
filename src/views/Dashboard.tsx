@@ -84,7 +84,11 @@ export class Dashboard extends React.Component<DashboardProps, DashboardState> {
 
     if (activedrawer !== undefined) {
       return activedrawer.contents.map((val) => {
-        return wrapInGridCell(val.name, wrapInPaper(val.item))
+        if (val.visible) { 
+          return wrapInGridCell(val.name, wrapInPaper(val.item))
+        } else {
+          return null;
+        }
       })
     } else {
       return wrapInGridCell("Oops", wrapInPaper(<p>Oops. Nothing to show.</p>))

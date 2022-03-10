@@ -30,7 +30,7 @@ export type T_ScanResult = {
 };
 // A notify that we subscribed to has delivered some data
 
-export type T_GATTNotify = {
+export type T_GATTNotifyResults = {
   MAC: string;
   Char: string;
   Data: T_Base64String;
@@ -50,12 +50,19 @@ export type T_ExecutionError = {
 };
 
 export type T_UpdateType = "ScanResult" | "GATTNotify" | "ConnectionState" | "ExecutionError";
-export type T_UpdateResult = T_ScanResult | T_GATTNotify | T_ConnectionStateNotify | T_ExecutionError;
+export type T_UpdateResult = T_ScanResult | T_GATTNotifyResults | T_ConnectionStateNotify | T_ExecutionError;
 export type T_Update = {
   type: "UPDATE"; // T_MsgType
   id: number;
   update: T_UpdateType;
   results: T_UpdateResult;
+};
+
+export type T_UpdateGATTNotify = {
+  type: "UPDATE"; // T_MsgType
+  id: number;
+  update: "GATTNotify";
+  results: T_GATTNotifyResults;
 };
 
 export type T_IncomingMsg = T_Response | T_Update;
@@ -116,6 +123,14 @@ export class MessageMaker {
     return this.makeReq("GATTRead", rid, params);
   }
 
+  makeGATTWrite(mac: string, char: string, data: Buffer, rid: number) {
+    const params = {
+      'MAC': mac,
+      'Char': char,
+      'Data': data.toString("base64")
+    };
+    return this.makeReq("GATTWrite", rid, params);
+  }
   makeGATTSetNotify(mac: string, char: string, enable: boolean, rid: number) {
     const params = {
       'MAC': mac,
@@ -123,9 +138,6 @@ export class MessageMaker {
       'Enable': enable
     };
     return this.makeReq("GATTSetNotify", rid, params);
-  }
-
-  makeMMRRead(address: number, bytelen: number) {
   }
 
   makeIncomingMsgFromJSON(jsondata: string): T_IncomingMsg {

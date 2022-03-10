@@ -3,6 +3,7 @@ import { T_ScanResult, T_Request, T_IncomingMsg, MessageMaker } from "./MessageM
 import { DashboardController } from "./DashboardController";
 import { E_Status, KeyStore } from "../models/KeyStore";
 import { WSState } from "./WSClient";
+import { MMRAddr } from "./MMRList";
 
 export interface I_SM_Event {
   type : T_AppMachineEvent;
@@ -92,7 +93,7 @@ class AsyncSimpleSM<EventType, StateType> {
  * KeyStore singleton.
  */
 
-export type T_AppMachineEvent = "EV_WSReady" | "EV_ScanDone" | "EV_Connected" | "EV_UpdateFirmware" | "EV_ReadLog" | "EV_ReqDisconnect" | "EV_FirmwareUpdated" | "EV_LogRead" | "EV_Disconnected";
+export type T_AppMachineEvent = "EV_WSReady" | "EV_ScanDone" | "EV_ReqScan" | "EV_Connected" | "EV_UpdateFirmware" | "EV_ReadLog" | "EV_ReqDisconnect" | "EV_FirmwareUpdated" | "EV_LogRead" | "EV_Disconnected";
 export type T_AppMachineState = "Init" | "ConnectWSC" | "StartBLEScan" | "SelectDE1" | "ShowMenu" | "ReadLog" | "DoFirmwareUpdate" | "Disconnect" | "Error";
  
 function makeEvent(ev : T_AppMachineEvent) {
@@ -109,6 +110,7 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
 
   dashcontroller = new DashboardController();
   MM   : MessageMaker = new MessageMaker();
+  CurrentConnection : string | null = null;
 
 
   _updateReadyStatus = ( ready : boolean ) => {
@@ -141,7 +143,15 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
 
   A_DoFirmwareUpdate = () => {};
 
-  A_ReadLog = () => {};
+  A_ReadLog = async () => {
+    if (!this.CurrentConnection) {
+      return;
+    }
+    await AppController.BLE0.setUpForMMRReads(this.CurrentConnection);
+    
+    const result = await AppController.BLE0.requestAsyncMMRRead(this.CurrentConnection, MMRAddr.CPUFirmwareBuild, 0);
+    console.log("A_ReadLog: ", result);
+  };
 
   A_SendDisconnect = () => {};
 
@@ -150,10 +160,12 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
     const conncb : I_BLEResponseCallback = (request : T_Request, response : T_IncomingMsg) : boolean => {
       let update = this.MM.connStateFromUpdate(this.MM.updateFromMsg(response));
       if (update.CState === "CONNECTED") {
+        this.CurrentConnection = addr;
         this.sendEventToSM({type: "EV_Connected"});
       }
 
       if (update.CState === "CANCELLED" || update.CState === "DISCONNECTED") {
+        this.CurrentConnection = null;
         this.sendEventToSM({type: "EV_Disconnected"}); 
       }
       return false;
@@ -168,69 +180,211 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
   }
 
   S_ConnectWSC : I_SM_State_Fn<T_AppMachineState> = async (newtransition) => {
+    if (newtransition) {
+      // If WSC is already connected, then no need to wait for a connection.
+      if (AppController.BLE0.WSC.getReadyState() == WebSocket.OPEN) {
+        // WebSocket is connected. Skip to next state.
+        return "StartBLEScan";
+      }
+    }
+    var nextstate : T_AppMachineState | null = null;
     const ev = this.getEvent()
     if (ev) {
       switch (ev.type) {
         case "EV_WSReady":
-          return "StartBLEScan";
+          nextstate =  "StartBLEScan";
           break;
-      
+
+        case "EV_Disconnected":
+          nextstate = "Init";
+          break;  
+        
         default:
           // Illegal event?
           console.log("Unexpected event in S_ConnectWSC: ", ev)
+          nextstate =  "Init"
           break;
       }
     }
 
-    return null;
+    return nextstate;
   }
 
   S_StartBLEScan : I_SM_State_Fn<T_AppMachineState> = async (newtransition) => {
     if (newtransition) {
       this.dashcontroller.setActiveDrawer("Devices");
       this.A_StartBLEScan();
+      AppController.getInstance().dashcontroller.setItemVisible("Devices", "Devices", true);
       return null;
     }
+
+    var nextstate : T_AppMachineState | null = null;
     const ev = this.getEvent()
     if (ev) {
       switch (ev.type) {
         case "EV_ScanDone":
-          return "SelectDE1"
+          nextstate = "SelectDE1"
           break;
-      
+
+        case "EV_Disconnected":
+          nextstate = "Init";
+          break;  
+        
         default:
           console.log("Unexpected event in S_StartBLEScan: ", ev)
+          nextstate = "Init"
           break;
       }
     }
 
-    return null;
+    return nextstate;
   }
 
   S_SelectDE1 : I_SM_State_Fn<T_AppMachineState> = async (newtransition) => {
+    var nextstate : T_AppMachineState | null = null;
     const ev = this.getEvent()
     if (ev) {
       switch (ev.type) {
         case "EV_Connected":
-          return "ShowMenu"
+          nextstate = "ShowMenu"
           break;
       
+        case "EV_ReqScan":
+          nextstate = "StartBLEScan";
+          break;
+
+        case "EV_Disconnected":
+          nextstate = "Init";
+          break;  
+
         default:
           console.log("Unexpected event in S_SelectDE1: ", ev)
+          nextstate = "Init"
           break;
       }
     }
     
-    return null;
+    return nextstate;
   }
 
   S_ShowMenu : I_SM_State_Fn<T_AppMachineState> = async (newtransition) => { 
+    if (newtransition) {
+      // Hide selection menu
+      // Show User Menu
+      AppController.getInstance().dashcontroller.setItemVisible("UserMenu", "Devices", true);
+      AppController.getInstance().dashcontroller.setItemVisible("Devices", "Devices", false);
+    }
+    var nextstate : T_AppMachineState | null = null;
+    const ev = this.getEvent()
+    if (ev) {
+      switch (ev.type) {
+        case "EV_ReadLog":
+          nextstate = "ReadLog";
+        break;
+        case "EV_UpdateFirmware":
+          nextstate = "DoFirmwareUpdate";
+        break;
+        case "EV_ReqDisconnect":
+          nextstate = "Disconnect";
+        break;
+        case "EV_Disconnected":
+          nextstate = "Init";
+        break;
+            
+        default:
+          break;
+      }
+    }
 
-    return null;
+    if (nextstate !== null) {
+      // We are exiting this state, so do any actions required
+      AppController.getInstance().dashcontroller.setItemVisible("UserMenu", "Devices", false);
+    }
+
+    return nextstate;
   }
-  S_ReadLog : I_SM_State_Fn<T_AppMachineState> = async (newtransition) => { return "Error" }
-  S_DoFirmwareUpdate : I_SM_State_Fn<T_AppMachineState> = async (newtransition) => { return "Error" }
-  S_Disconnect : I_SM_State_Fn<T_AppMachineState> = async (newtransition) => { return "Error" }
+
+  S_ReadLog : I_SM_State_Fn<T_AppMachineState> = async (newtransition) => { 
+    if (newtransition) {
+      // Start another async task that does log reading.
+      await this.A_ReadLog();
+    }
+    var nextstate : T_AppMachineState | null = null;
+    const ev = this.getEvent()
+    if (ev) {
+      switch (ev.type) {
+        case "EV_Disconnected":
+          nextstate = "Init";
+        break;
+            
+        default:
+          break;
+      }
+    }
+
+    if (nextstate !== null) {
+      // We are exiting this state; do any actions required
+      
+    }
+
+    return nextstate;
+  }
+
+  S_DoFirmwareUpdate : I_SM_State_Fn<T_AppMachineState> = async (newtransition) => {
+    var nextstate : T_AppMachineState | null = null;
+    const ev = this.getEvent()
+    if (ev) {
+      switch (ev.type) {
+        case "EV_Disconnected":
+          nextstate = "Init";
+        break;
+            
+        default:
+          break;
+      }
+    }
+
+    if (nextstate !== null) {
+      // We are exiting this state; do any actions required
+      
+    }
+
+    return nextstate;
+  }
+
+  S_Disconnect : I_SM_State_Fn<T_AppMachineState> = async (newtransition) => {
+    if (newtransition) {
+      console.log("AppMachine S_Disconnect() requesting disconnect from ", this.CurrentConnection)
+      if (this.CurrentConnection) {
+        const discb : I_BLEResponseCallback = (request : T_Request, response : T_IncomingMsg) : boolean => {
+          console.log("S_Disconnect: Disconnect: ", response)
+          this.sendEventToSM({type: "EV_Disconnected"});
+          return false;
+        }
+        AppController.BLE0.requestGATTDisconnect(this.CurrentConnection, discb);
+      }
+    }
+    var nextstate : T_AppMachineState | null = null;
+    const ev = this.getEvent()
+    if (ev) {
+      switch (ev.type) {
+        case "EV_Disconnected":
+          nextstate = "Init";
+        break;
+            
+        default:
+          break;
+      }
+    }
+
+    if (nextstate !== null) {
+      // We are exiting this state; do any actions required
+      
+    }
+
+    return nextstate;
+  }
+
   S_Error : I_SM_State_Fn<T_AppMachineState> = async (newtransition) => { return null }
 
   StateMap: Map<T_AppMachineState, I_SM_State_Fn<T_AppMachineState>> = new Map<T_AppMachineState, I_SM_State_Fn<T_AppMachineState>>(
@@ -254,6 +408,7 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
 
   onTransition = () => {
     console.log(`AppMachine state transition: ${this.LastState} -> ${this.CurrentState}`);
+    KeyStore.getInstance().updateKey("AppController", "AppMachineState", this.CurrentState)
   }
 
   _wschange = (owner: string, key: string, status: E_Status, before: any, after: any) => {
@@ -270,7 +425,11 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
 
 
   run = async () => {
-    await this.evalSM();
+    try {
+      await this.evalSM();      
+    } catch (error) {
+      console.log("Exception in AppMachine.run(): ", error)
+    }
     setTimeout(this.run, 1);
   }
 }

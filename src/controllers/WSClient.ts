@@ -98,8 +98,6 @@ export class WSClientController {
   }
 
   connect() {
-    this._clearReconnectTimeout();
-
     if (this.WS == null) {
       this.WS = new WebSocket(this.URL);
     }

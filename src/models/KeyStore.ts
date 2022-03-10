@@ -188,7 +188,7 @@ export class KeyStore  {
    * Prototype for changedfn:
    *  fn(owner, key, status, before, after)
    * 
-   *  owner: string identifying owner
+   *  owner: string identifying owner (ie. the code updating the key)
    *  key: string identifying key
    *  status: will be one of 'Added', 'Changed', 'Deleted'
    *  before: null or the old value before a change

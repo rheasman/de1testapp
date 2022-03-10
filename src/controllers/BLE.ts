@@ -1,8 +1,7 @@
-import { KeyboardTab, SignalWifiStatusbarConnectedNoInternet4 } from '@mui/icons-material';
-import { updateDecorator } from 'typescript';
+import { RepeatOneSharp } from '@mui/icons-material';
 import { StringifyingMap } from '../components/StringifyingMap';
 import KeyStore from '../models/KeyStore'
-import { T_DeviceState, T_ConnectionState, T_Request, T_IncomingMsg, T_ScanResult, MessageMaker, T_GATTNotify } from './MessageMaker';
+import { T_DeviceState, T_ConnectionState, T_Request, T_IncomingMsg, T_ScanResult, MessageMaker, T_GATTNotifyResults, T_Response, T_Update, T_UpdateGATTNotify, T_Base64String } from './MessageMaker';
 import { WSClientController, WSState } from './WSClient'
 
 export class DeviceMap extends StringifyingMap<string, T_DeviceState> {
@@ -48,6 +47,30 @@ export interface ReadyCallback {
   ( ready : boolean ) : void;
 }
 
+type MMRAddress = {
+  MAC : string,
+  Addr : number
+}
+
+export interface MMRCallback {
+  // If success == false, then payload === null
+  ( success : boolean, mac : string, wordlen : number, addr : number, payload : Buffer|null) : void;
+}
+
+interface MMRReadReq {
+  mac: string,
+  mmraddress : number, 
+  wordlen : number, 
+  callback : MMRCallback;
+}
+
+interface MMRReadResponse {
+  mac: string,
+  mmraddress : number, 
+  wordlen : number, 
+  payload : Buffer
+}
+
 class IDMap extends StringifyingMap<number, IDBundle> {
   protected stringifyKey(key: number): string {
     return key.toString();
@@ -57,6 +80,12 @@ class IDMap extends StringifyingMap<number, IDBundle> {
 class NotifyMap extends StringifyingMap<T_NotifyKey, I_BLEUpdateCallback> {
   protected stringifyKey(key: T_NotifyKey): string {
     return key.MAC + key.Char;
+  }
+}
+
+class MMRNotifyMap extends StringifyingMap<MMRAddress, MMRCallback> {
+  protected stringifyKey(key: MMRAddress): string {
+    return key.MAC.toString() + key.Addr.toString();
   }
 }
 
@@ -77,6 +106,8 @@ export class BLE  {
   Name : string;
   WSC  : WSClientController;
   WSCName : string;
+  MMRMap : MMRNotifyMap = new MMRNotifyMap();
+  PendingMMRReads : MMRReadReq[] = [];
 
   MAX_ID = 1000000000;
 
@@ -84,7 +115,7 @@ export class BLE  {
     this.ReadyCallbackMap.set(cb, "");
   }
 
-  UnregisterForReadyUpdates(cb : ReadyCallback) {
+  unregisterForReadyUpdates(cb : ReadyCallback) {
     this.ReadyCallbackMap.delete(cb);
   }
 
@@ -140,7 +171,7 @@ export class BLE  {
     }
     if (this.WSC.getReadyState() === WebSocket.CLOSED) {
       // No more devices known
-      this.SeenDevices = new DeviceMap();
+      this.reset();
       KeyStore.getInstance().updateKey(this.Name, "DeviceSet", this.SeenDevices, true);
       this.ReadyCallbackMap.forEach( (value, key, map) => { key(false) })
     }
@@ -153,11 +184,11 @@ export class BLE  {
     if (update.type === "UPDATE") {
       if (update.update === "GATTNotify") {
         // A GATT Characteristic changed. Notify if someone cares.
-        const notify : T_GATTNotify = update.results as T_GATTNotify;
+        const notify : T_GATTNotifyResults = update.results as T_GATTNotifyResults;
         const key = { MAC : notify.MAC, Char : notify.Char } as T_NotifyKey;
         const callback = this.NotifyCallbackMap.get(key);
         if (callback !== undefined) {
-          const keepmapping = callback(update);
+          callback(update);
         }
       }
     }
@@ -358,7 +389,42 @@ export class BLE  {
     }    
     this._sendRequest(this.MM.makeDisconnect(mac, 0), disconncb);
   }
-  
+
+    /**
+   * Do a callback write to a GATT device
+   * 
+   * @param mac MAC address
+   * @param char Characteristic to write
+   * @param data Data to write (should just be the size of the characteristic, for now)
+   * @param callback Callback to call with response. Return false from callback.
+   */
+     requestGATTWrite(mac : string, char : string, data : Buffer, callback : I_BLEResponseCallback) {
+      this._sendRequest(this.MM.makeGATTWrite(mac, char, data, 0), callback);
+    }
+
+   /**
+   * Do an async write to a GATT device
+   * 
+   * @param mac MAC address
+   * @param char Characteristic to write
+   * @param readlen Number of bytes to write (should just be the size of the characteristic, for now)
+   * @returns T_IncomingMsg, which is the result of your request.
+   * 
+   * TODO: Should perhaps make this throw an exception if the response is an error, instead of just
+   * returning it? Confused as I'm told to throw a new Error() and there's no nice way to include
+   * the actual error in the response.
+   */
+  async requestAsyncGATTWrite(mac : string, char : string, readlen : number) : Promise<T_IncomingMsg> {
+    return new Promise<T_IncomingMsg>((resolve, reject) => {
+      const blecb = (request : T_Request, response : T_IncomingMsg): boolean => {
+        resolve(response);
+        return false;
+      }
+
+      this.requestGATTRead(mac, char, readlen, blecb);
+    })
+  }
+
   /**
    * Do a callback read from a GATT device
    * 
@@ -419,6 +485,196 @@ export class BLE  {
         this.NotifyCallbackMap.delete(key)      
       }
     }
+  }
+
+  // This is a DE1 specific BLE request. Decided that I'd put it here, even though it's not
+  // a generic BLE operation.
+
+  /**
+   * This sets up internal state so that this BLE object can transparently handle
+   * MMR reads for you, to a DE1.
+   * 
+   * @param mac MAC address of a DE1
+   * 
+   * Throws the response if the response is an error.
+   */
+  async setUpForMMRReads(mac: string) : Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const respcallback : I_BLEResponseCallback = (request : T_Request, response : T_IncomingMsg) : boolean => {
+        if (response.type === "RESP") {
+          const resp = response as T_Response;
+          if (resp.error.eid == 0) {
+            resolve();    
+            return false;
+          }
+        }
+
+        reject(response);
+        return false;  
+      }
+
+      this.requestGATTSetNotify(mac, BLE.MMRReadChar, true, respcallback, this._wrapWithMAC(mac, this._localMMRUpdateCB));
+    })
+  }
+
+  // Convert a Base64 representation of an MMR to its constituent fields.
+  static _unpackMMRData(data : T_Base64String) {
+    const bindata = Buffer.from(data, "base64");
+    const wordlen = bindata[0];
+    const addr = (bindata[1] << 16) + (bindata[2] << 8) + (bindata[3]);
+    const payload = bindata.slice(4);
+    return { wordlen, addr, payload };
+  }
+
+  // Make a buffer that represents a MMR read
+  static _packMMRRead(wordlen : number, addr : number) : Buffer {
+    const data = new Uint8Array(20);
+    var header = [
+      wordlen,
+      (addr >> 16) & 0xFF,
+      (addr >>  8) & 0xFF,
+      addr        & 0xFF
+    ]
+    data.set(header, 0);
+    return Buffer.from(data);
+  }
+  
+  // Wrap a call so that the called function knows the MAC address of the counterparty BLE device.
+  _wrapWithMAC = (mac : string, callback : CallableFunction ) : I_BLEUpdateCallback => {
+    const cbfn : I_BLEUpdateCallback = ( msg : T_IncomingMsg ): boolean=> {
+      callback(mac, msg);
+      return false;
+    }
+    return cbfn;
+  }
+
+  // Called back when we get a notify update from the DE1. We don't know which DE1, so accept a MAC too.
+  _localMMRUpdateCB = (mac : string, msg : T_IncomingMsg) => {
+    if ((msg.type === "UPDATE") && (msg.update === "GATTNotify")) {
+      const gattn = msg as T_UpdateGATTNotify;
+      const res = BLE._unpackMMRData(gattn.results.Data);
+
+      const cb = this.MMRMap.get({ MAC : mac, Addr: res.addr });
+      if (cb !== undefined) {
+        cb(true, mac, res.wordlen, res.addr, res.payload);
+      };
+
+      console.log(`_locallMMRUpdateCB(${mac}, ${msg}):`, res);
+    }
+    return true;
+  }
+
+  static MMRReadChar = "0000a005-0000-1000-8000-00805f9b34fb";
+
+  // Look to see if we have any MMR reads we could do
+  // Returns true if it pulled a read out of the queue
+  _procPendingMMRRead = () : boolean => {
+    const oldestitem = this.PendingMMRReads.at(0);
+    if (oldestitem) {
+      const key = { MAC: oldestitem.mac, Addr: oldestitem.mmraddress };
+      if (!this.MMRMap.has(key)) {
+        // Okay. No existing read for this address. Let's do it.
+        // We can only have one read outstanding per address, as we only
+        // have the address to key on.
+        this.PendingMMRReads.shift(); // Discard from queue
+        const item = oldestitem;
+        const blecb = (request : T_Request, response : T_IncomingMsg): boolean => {
+          // If the write succeeded 
+          if (response.type === "RESP") {
+            const resp = response as T_Response;
+            if (resp.error.eid === 0) {
+              // Success, add notify to map, for response
+              this.MMRMap.set({ MAC: item.mac, Addr: item.mmraddress }, item.callback);
+            } else {
+              // Something went wrong, so return error to callback
+              item.callback(false, item.mac, item.wordlen, item.mmraddress, null);
+            }
+          }
+
+          // If there's a chance we could now trigger a new read, do so.
+          // Note that we are still in the callback. Every finished MMR Read triggers
+          // the chance that we could start a new one.
+          if (this.PendingMMRReads.length > 0) {
+            this._procPendingMMRReads();
+          }
+          return false;
+        }
+
+        var data = BLE._packMMRRead(item.wordlen, item.mmraddress);
+        // Do the GATT write that will trigger a notify callback
+        this.requestGATTWrite(item.mac, BLE.MMRReadChar, data, blecb);
+        return true; 
+      }
+    }
+
+    return false;
+  }
+
+  // This method reads as many as possible pending MMR requests out of the queue and sends them.
+  _procPendingMMRReads = () => {
+    do {
+      var didread = this._procPendingMMRRead()
+    } while (didread);
+  }
+
+  /**
+   * Request a read from an MMR
+   * @param mac MAC address of target device
+   * @param mmraddress Address to read from
+   * @param wordlen Number of words to read
+   * @param callback MMRCallback to call when we have data
+   */
+  requestMMRRead(mac: string, mmraddress : number, wordlen : number, callback : MMRCallback) {
+    const key : T_NotifyKey = { MAC : mac, Char : BLE.MMRReadChar} as T_NotifyKey;
+  
+    if (!this.NotifyCallbackMap.has(key)) {
+      throw new Error("Call setUpForMMRReads() once first, to enable MMR reads");
+    }
+
+    // Put the MMR read request on the pending queue.
+    this.PendingMMRReads.push( {mac, mmraddress, wordlen, callback} )
+    // Now pick reads off the queue
+    this._procPendingMMRReads();
+  }
+
+
+  /**
+   * Request a read from an MMR
+   * @param mac MAC address of target device
+   * @param mmraddress Address to read from
+   * @param wordlen Number of words to read
+   * @returns MMRReadResponse 
+   */
+  async requestAsyncMMRRead(mac: string, mmraddress : number, wordlen : number) {
+    return new Promise<MMRReadResponse>( (resolve, reject) => {
+      const mmrcb : MMRCallback = (success, mac, wordlen, addr, payload) => {
+        if (success && (payload !== null)) {
+          resolve({mac, mmraddress, wordlen, payload});
+        } else {
+          reject(new Error(`MMR read to ${mac} ${mmraddress.toString(16)} failed for unknown reason.`))
+        }
+      }  
+
+      // Request the read, could throw an error.
+      this.requestMMRRead(mac, mmraddress, wordlen, mmrcb);
+    });
+  }
+
+
+  /**
+   * It's not entirely clear to me what we should do when the websocket connection is lost.
+   * 
+   * Should I just reset everything?
+   * 
+   * I starting to think that I shouldn't even keep a local list of seen and connected devices,
+   * as we run the risk of getting out of sync.
+   */
+  reset = () => {
+    this.SeenDevices.clear();
+    this.ConnectedDevices.clear();
+    this.NotifyCallbackMap.clear();
+    this.SentMap.clear();
+    this.PendingMMRReads = [];
   }
 
   constructor(name: string, url: string){

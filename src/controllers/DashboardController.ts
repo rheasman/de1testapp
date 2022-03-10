@@ -3,6 +3,7 @@ import { Dashboard } from "../views/Dashboard";
 export interface DrawerContentType {
   name : string,
   item : JSX.Element
+  visible : boolean;
 }
 
 export interface DrawerType {
@@ -78,14 +79,29 @@ export class DashboardController {
    * @param {string} drawer 
    * @param {React.Component} item 
    */
-  addItem(name: string, drawername: string, item: JSX.Element) {
+  addItem(name: string, drawername: string, item: JSX.Element, visible : boolean) {
     var drawer: DrawerType|undefined = this.findDrawer(drawername);
     if (drawer !== undefined) {
-      drawer.contents.push({name, item});
+      drawer.contents.push({name, item, visible});
       this.signalChange();
     } else {
       throw Error("Couldn't find drawer "+drawername);
     }
+  }
+
+  setItemVisible(name : string, drawername: string, visible: boolean) {
+    var drawer: DrawerType|undefined = this.findDrawer(drawername);
+
+    if (drawer === undefined) return;
+
+    drawer.contents.forEach(element => {
+      if (element.name == name) {
+        if (element.visible !== visible) {
+          element.visible = visible;
+          this.signalChange();
+        }
+      }
+    });
   }
 
   setActiveDrawer(name: string) {
@@ -98,7 +114,7 @@ export class DashboardController {
   removeItem(name : string, drawername: string) {
     var drawer: DrawerType|undefined = this.findDrawer(drawername);
     if (drawer !== undefined) {
-      drawer.contents.filter( (val, ind, arr) => { return val.name !== name } );
+      drawer.contents = drawer.contents.filter( (val, ind, arr) => { return val.name !== name } );
       this.signalChange();
     }
   }
