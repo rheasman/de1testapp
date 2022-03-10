@@ -3,7 +3,7 @@ import { AppController } from "./controllers/AppController";
 import { Dashboard } from "./views/Dashboard";
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import BluetoothSearchingIcon from '@mui/icons-material/BluetoothSearching';
-import Devices from "./views/Devices";
+import { Devices } from "./views/Devices"
 import Updater from "./views/Updater";
 import { DrawerContentType } from "./controllers/DashboardController";
 import WSClient from "./views/WSClient";

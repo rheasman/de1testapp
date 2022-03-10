@@ -306,8 +306,10 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
 
   S_ReadLog : I_SM_State_Fn<T_AppMachineState> = async (newtransition) => { 
     if (newtransition) {
+      AppController.getInstance().dashcontroller.setItemVisible("Devices", "DE1Info", true);
+
       // Start another async task that does log reading.
-      await this.A_ReadLog();
+      setTimeout(this.A_ReadLog, 0);
     }
     var nextstate : T_AppMachineState | null = null;
     const ev = this.getEvent()
@@ -430,6 +432,6 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
     } catch (error) {
       console.log("Exception in AppMachine.run(): ", error)
     }
-    setTimeout(this.run, 1);
+    setTimeout(this.run, 10);
   }
 }

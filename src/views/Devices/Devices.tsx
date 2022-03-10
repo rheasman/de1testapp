@@ -5,16 +5,15 @@ import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
-import Title from './Title';
-import { E_Status, NotifyCallbackType } from '../models/KeyStore';
-import KeyStore from '../models/KeyStore';
-import { I_BLEResponseCallback, DeviceMap } from '../controllers/BLE';
-import { T_IncomingMsg, T_Request, T_ConnectionState } from "../controllers/MessageMaker";
+import Title from '../Title';
+import { E_Status, NotifyCallbackType } from '../../models/KeyStore';
+import KeyStore from '../../models/KeyStore';
+import { I_BLEResponseCallback, DeviceMap } from '../../controllers/BLE';
+import { T_IncomingMsg, T_Request, T_ConnectionState } from "../../controllers/MessageMaker";
 import { ConnectWithoutContactSharp, DoNotDisturbOnSharp, RadarSharp, BluetoothConnectedSharp } from '@mui/icons-material';
 import { Box, CircularProgress, IconButton, Stack } from '@mui/material';
-import { AppController, T_AppMachineState } from '../controllers/AppController';
+import { AppController, T_AppMachineState } from '../../controllers/AppController';
 import "./Devices.css";
-import { height, width } from '@mui/system';
 
 type RowDataType = {
   addr : string,
@@ -39,7 +38,7 @@ type MyProps = {
 }
 
 // Generate Machine Data
-class Devices extends Component<MyProps, MyState> {
+export class Devices extends Component<MyProps, MyState> {
   state : MyState;
   constructor(props : MyProps) {
     super(props);
@@ -232,18 +231,4 @@ class Devices extends Component<MyProps, MyState> {
   }
 }
  
-export default Devices;
-
-/*
-import * as React from 'react';
-import CircularProgress from '@mui/material/CircularProgress';
-import Box from '@mui/material/Box';
-
-export default function CircularIndeterminate() {
-  return (
-    <Box sx={{ display: 'flex' }}>
-      <CircularProgress />
-    </Box>
-  );
-}
-*/
+// export default Devices;

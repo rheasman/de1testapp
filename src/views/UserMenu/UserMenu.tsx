@@ -1,5 +1,5 @@
 import React, { Component } from 'react';
-import { AppController } from '../controllers/AppController';
+import { AppController } from '../../controllers/AppController';
 import "./UserMenu.css";
 
 type MyState = {
