@@ -1,9 +1,12 @@
-import { BLE, I_BLEResponseCallback } from "./BLE";
-import { T_ScanResult, T_Request, T_IncomingMsg, MessageMaker } from "./MessageMaker";
+import { BLE, I_ConnectionStateCallback } from "./BLE";
+import { T_ScanResult, T_Request, MessageMaker, T_ConnectionStateNotify } from "./MessageMaker";
 import { DashboardController } from "./DashboardController";
 import { E_Status, KeyStore } from "../models/KeyStore";
 import { WSState } from "./WSClient";
 import { MMRAddr } from "./MMRList";
+import { DebugLogListItem } from "../views/Dashboard/listItems";
+import { upload_Firmware } from "./DE1Utils";
+import { Updater } from "../views/Updater";
 
 export interface I_SM_Event {
   type : T_AppMachineEvent;
@@ -93,25 +96,50 @@ class AsyncSimpleSM<EventType, StateType> {
  * KeyStore singleton.
  */
 
-export type T_AppMachineEvent = "EV_WSReady" | "EV_ScanDone" | "EV_ReqScan" | "EV_Connected" | "EV_UpdateFirmware" | "EV_ReadLog" | "EV_ReqDisconnect" | "EV_FirmwareUpdated" | "EV_LogRead" | "EV_Disconnected";
-export type T_AppMachineState = "Init" | "ConnectWSC" | "StartBLEScan" | "SelectDE1" | "ShowMenu" | "ReadLog" | "DoFirmwareUpdate" | "Disconnect" | "Error";
+export type T_AppMachineEvent = "EV_WSReady"   | 
+                                "EV_ScanDone"  | 
+                                "EV_ReqScan"   | 
+                                "EV_Connected"  | 
+                                "EV_SelectFirmware"   | 
+                                "EV_FirmwareSelected" |
+                                "EV_ReadLog"          | 
+                                "EV_ReqDisconnect"    | 
+                                "EV_FirmwareUpdated"  | 
+                                "EV_LogRead"          | 
+                                "EV_Disconnected";
+export type T_AppMachineState = "Init" | 
+                                "ConnectWSC" | 
+                                "StartBLEScan" | 
+                                "SelectDE1" | 
+                                "ShowMenu" | 
+                                "ReadLog" | 
+                                "DoFirmwareSelect" | 
+                                "DoFirmwareUpdate" | 
+                                "Disconnect" | 
+                                "Error";
  
 function makeEvent(ev : T_AppMachineEvent) {
   return { type : ev };
 }
 
+type T_Connection = {
+  name : string,
+  mac  : string
+}
+
 export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
   // @ts-expect-error
   private static instance : AppController = AppController.instance || new AppController();
-  static BLE0 = new BLE("BLE0", "ws://localhost:8765")
+  static BLE0 = new BLE("BLE0", "ws://192.168.68.67:8765")
+  // static BLE0 = new BLE("BLE0", "ws://127.0.0.1:8765")
   public static getInstance() {
       return AppController.instance;
   }
 
   dashcontroller = new DashboardController();
   MM   : MessageMaker = new MessageMaker();
-  CurrentConnection : string | null = null;
-
+  CurrentConnection : T_Connection | null = null;
+  DebugLogList : DebugLogListItem[] = [];
 
   _updateReadyStatus = ( ready : boolean ) => {
     if (ready) {
@@ -128,7 +156,7 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
         this.sendEventToSM({type: "EV_ScanDone"});
       }
     }
-    AppController.BLE0.requestScanWithCallbacks(6, scancb);
+    AppController.BLE0.requestScanWithCallbacks(3, scancb);
   }
 
   A_ShowMenu = () => {};
@@ -141,26 +169,97 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
 
   A_HideBLEScan = () => {};
 
-  A_DoFirmwareUpdate = () => {};
+  A_DoFirmwareUpdate = async () => {
+    const filelist = KeyStore.getInstance().readKey("Updater", "firmwarefile") as FileList|null;
+    if (!filelist || !this.CurrentConnection) return;
+
+    const filedata = await filelist[0].arrayBuffer()
+    console.log("this.CurrentConnection:", this.CurrentConnection)
+    const res = await upload_Firmware(AppController.BLE0, this.CurrentConnection.mac, filedata);
+    if (res.success) {
+      console.log("Firmware upload succeeded")
+    } else {
+      console.log("Firmware upload failed: ", res.error)
+    }
+
+  };
+
+  _readLEUInt32(buf : Buffer, offset : number = 0) : number {
+    var arrbuff = Uint8Array.from(buf).buffer;
+    var dv = new DataView(arrbuff, offset);
+    return dv.getUint32(0, true);
+  }
+
+  
+  wait = (ms : number) => {
+    return new Promise((r, j)=>setTimeout(r, ms))
+  }
 
   A_ReadLog = async () => {
     if (!this.CurrentConnection) {
       return;
     }
-    await AppController.BLE0.setUpForMMRReads(this.CurrentConnection);
+    const mac = this.CurrentConnection.mac
+
+    var fro = await AppController.BLE0.setUpForMMRReads(mac);
+    if (!fro.success) {
+      console.log("A_ReadLog: Cound not enable MMR reads")
+      return
+    }
     
-    const result = await AppController.BLE0.requestAsyncMMRRead(this.CurrentConnection, MMRAddr.CPUFirmwareBuild, 0);
-    console.log("A_ReadLog: ", result);
+    console.log("Starting debug log read");
+    const loglenresp = await AppController.BLE0.requestAsyncMMRRead(mac, MMRAddr.DebugLen, 0);
+    console.log("A_ReadLog: ", loglenresp);
+    const loglen = this._readLEUInt32(loglenresp.payload, 0);
+    console.log("A_ReadLog: Log length is", loglen);
+    if (loglen > 4096) {
+      throw new Error(`Loglen of ${loglen} is out of range`);
+    }
+    if (loglen === 0) {
+      return;
+    }
+
+    var resultarray = new Uint8Array(loglen);
+    var pos = 0;
+    while (pos < loglen) {
+      console.log(`A_ReadLog: Reading at offset ${pos} out of ${loglen}`);
+      try {
+        var dataresp = await AppController.BLE0.requestAsyncMMRRead(mac, MMRAddr.DebugBuffer+pos, 3); // Read 16 bytes (16 >> 2)-1 = 3        
+        resultarray.set(Array.from(dataresp.payload), pos);
+        KeyStore.getInstance().updateKey("AppController", "debuglogprogress", pos*100.0/loglen)
+      } catch (error) {
+        console.log(error);        
+      }
+      pos += 16;
+      // if ((pos % 1024) === 0) {
+      //    await this.wait(1000);
+      // }
+    }
+    await AppController.BLE0.requestAsyncMMRRead(mac, MMRAddr.DebugConfig, 0);
+
+    var logstr : string = "";
+    logstr += String.fromCharCode(...resultarray);      
+    KeyStore.getInstance().updateKey('AppController', 'debuglog', logstr);
+    this.DebugLogList.push({ name: (new Date()).toJSON(), log: logstr })
+    KeyStore.getInstance().updateKey('AppController', 'debugloglist', this.DebugLogList, true);
+
+    console.log("Debug log: ", logstr);
+
   };
+
+  /*
+  def write_FWMapRequest(ctic, WindowIncrement=0, FWToErase=0, FWToMap=0, FirstError=0, withResponse=True):
+  data = struct.pack('>HBB3s', WindowIncrement, FWToErase, FWToMap, toU24P0(FirstError))
+  ctic.write(data, withResponse=withResponse)
+  */
 
   A_SendDisconnect = () => {};
 
-  requestConnect = (addr : string) => {
+  requestConnect = (name: string, mac : string) => {
     // Used by Devices view to tell us the addr to connect to
-    const conncb : I_BLEResponseCallback = (request : T_Request, response : T_IncomingMsg) : boolean => {
-      let update = this.MM.connStateFromUpdate(this.MM.updateFromMsg(response));
+    const conncb : I_ConnectionStateCallback = (request : T_Request, update : T_ConnectionStateNotify) : boolean => {
       if (update.CState === "CONNECTED") {
-        this.CurrentConnection = addr;
+        this.CurrentConnection = { name, mac };
         this.sendEventToSM({type: "EV_Connected"});
       }
 
@@ -170,12 +269,14 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
       }
       return false;
     }
-    AppController.BLE0.requestGATTConnect(addr, conncb);
+
+    AppController.BLE0.requestGATTConnect(mac, conncb);
   }
 
 
   S_Init : I_SM_State_Fn<T_AppMachineState> = async (newtransition) => {
     AppController.BLE0.registerForReadyUpdates(this._updateReadyStatus);
+    AppController.getInstance().dashcontroller.setActiveDrawer("Devices")
     return "ConnectWSC";
   }
 
@@ -232,7 +333,7 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
         
         default:
           console.log("Unexpected event in S_StartBLEScan: ", ev)
-          nextstate = "Init"
+          // nextstate = "Init"
           break;
       }
     }
@@ -259,7 +360,7 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
 
         default:
           console.log("Unexpected event in S_SelectDE1: ", ev)
-          nextstate = "Init"
+          // nextstate = "Init"
           break;
       }
     }
@@ -281,8 +382,8 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
         case "EV_ReadLog":
           nextstate = "ReadLog";
         break;
-        case "EV_UpdateFirmware":
-          nextstate = "DoFirmwareUpdate";
+        case "EV_SelectFirmware":
+          nextstate = "DoFirmwareSelect";
         break;
         case "EV_ReqDisconnect":
           nextstate = "Disconnect";
@@ -306,10 +407,9 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
 
   S_ReadLog : I_SM_State_Fn<T_AppMachineState> = async (newtransition) => { 
     if (newtransition) {
-      AppController.getInstance().dashcontroller.setItemVisible("Devices", "DE1Info", true);
+      AppController.getInstance().dashcontroller.setItemVisible("DE1Info", "Devices", true);
 
-      // Start another async task that does log reading.
-      setTimeout(this.A_ReadLog, 0);
+      await this.A_ReadLog()
     }
     var nextstate : T_AppMachineState | null = null;
     const ev = this.getEvent()
@@ -332,7 +432,17 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
     return nextstate;
   }
 
-  S_DoFirmwareUpdate : I_SM_State_Fn<T_AppMachineState> = async (newtransition) => {
+  S_DoFirmwareSelect : I_SM_State_Fn<T_AppMachineState> = async (newtransition) => {
+    if (newtransition) {
+      // Start another async task that does firmware update
+      const dc = AppController.getInstance().dashcontroller
+
+      if (this.CurrentConnection) {
+        dc.addItem("Updater", "Firmware", <Updater mac={this.CurrentConnection.mac} name={this.CurrentConnection.name} />, true);
+        dc.setActiveDrawer("Firmware")
+      }
+    }
+    
     var nextstate : T_AppMachineState | null = null;
     const ev = this.getEvent()
     if (ev) {
@@ -340,7 +450,37 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
         case "EV_Disconnected":
           nextstate = "Init";
         break;
+
+        case "EV_FirmwareSelected":
+          nextstate = "DoFirmwareUpdate"
+        break;
             
+        default:
+          break;
+      }
+    }
+
+    if (nextstate !== null) {
+      // We are exiting this state; do any actions required
+      
+    }
+
+    return nextstate;
+  }
+
+  S_DoFirmwareUpdate : I_SM_State_Fn<T_AppMachineState> = async (newtransition) => {
+    if (newtransition) {
+      await this.A_DoFirmwareUpdate()
+    }
+    
+    var nextstate : T_AppMachineState | null = null;
+    const ev = this.getEvent()
+    if (ev) {
+      switch (ev.type) {
+        case "EV_Disconnected":
+          nextstate = "Init";
+        break;
+
         default:
           break;
       }
@@ -358,12 +498,12 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
     if (newtransition) {
       console.log("AppMachine S_Disconnect() requesting disconnect from ", this.CurrentConnection)
       if (this.CurrentConnection) {
-        const discb : I_BLEResponseCallback = (request : T_Request, response : T_IncomingMsg) : boolean => {
+        const discb : I_ConnectionStateCallback = (request : T_Request, response : T_ConnectionStateNotify) : boolean => {
           console.log("S_Disconnect: Disconnect: ", response)
           this.sendEventToSM({type: "EV_Disconnected"});
           return false;
         }
-        AppController.BLE0.requestGATTDisconnect(this.CurrentConnection, discb);
+        AppController.BLE0.requestGATTDisconnect(this.CurrentConnection.mac, discb);
       }
     }
     var nextstate : T_AppMachineState | null = null;
@@ -397,6 +537,7 @@ export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
       ["SelectDE1", this.S_SelectDE1],
       ["ShowMenu", this.S_ShowMenu],
       ["ReadLog", this.S_ReadLog],
+      ["DoFirmwareSelect", this.S_DoFirmwareSelect],
       ["DoFirmwareUpdate", this.S_DoFirmwareUpdate],
       ["Disconnect", this.S_Disconnect],
       ["Error", this.S_Error]

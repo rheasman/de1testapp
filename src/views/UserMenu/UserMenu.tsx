@@ -1,3 +1,4 @@
+import { Box, Button, Stack } from '@mui/material';
 import React, { Component } from 'react';
 import { AppController } from '../../controllers/AppController';
 import "./UserMenu.css";
@@ -25,7 +26,7 @@ export class UserMenu extends Component<MyProps, MyState> {
           AppController.getInstance().sendEventToSM({type : 'EV_ReadLog'});
           break;
         case 1:
-          AppController.getInstance().sendEventToSM({type : 'EV_UpdateFirmware'});
+          AppController.getInstance().sendEventToSM({type : 'EV_SelectFirmware'});
           break;
         case 2:
           AppController.getInstance().sendEventToSM({type : 'EV_ReqDisconnect'});
@@ -40,11 +41,11 @@ export class UserMenu extends Component<MyProps, MyState> {
 
   render() { 
     return (
-    <div className="user-menu">
-      <button type="button" onClick={this.makeOnclick(0)}>Read Debug Log</button>
-      <button type="button" onClick={this.makeOnclick(1)}>Update Firmware</button>
-      <button type="button" onClick={this.makeOnclick(2)}>Disconnect</button>
-    </div>
+      <Stack className="user-menu" sx={{spacing: 1}}>
+        <Button variant="contained" onClick={this.makeOnclick(0)}>Read Debug Log</Button>
+        <Button variant="contained" onClick={this.makeOnclick(1)}>Update Firmware</Button>
+        <Button variant="contained" onClick={this.makeOnclick(2)}>Disconnect</Button>
+      </Stack>
     )
   }
 }

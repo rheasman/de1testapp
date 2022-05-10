@@ -9,7 +9,9 @@
 }
 
 .user-menu > button {
-
   font-size: large;
-
+  /* border-radius: 1em;
+  padding: 1em;
+  background-color: #00D;
+  color: #FFF */
 }

@@ -14,14 +14,14 @@ import Paper from "@mui/material/Paper";
 import MenuIcon from "@mui/icons-material/Menu";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 // import NotificationsIcon from '@mui/icons-material/Notifications';
-import { secondaryListItems } from "./listItems";
-import { OurAppBar, OurDrawer } from "./AppBar";
+import { OurAppBar, OurDrawer } from "../AppBar";
 
 import ListItem from '@mui/material/ListItem';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
-import { DashboardController, DrawerType } from "../controllers/DashboardController";
+import { DashboardController, DrawerType } from "../../controllers/DashboardController";
 import { Copyright } from "@mui/icons-material";
+import { DebugLogList } from "./listItems"
 
 export const mdTheme = createTheme();
 
@@ -182,7 +182,7 @@ export class Dashboard extends React.Component<DashboardProps, DashboardState> {
             <Divider />
             <List>{this.mainListItems()}</List>
             <Divider />
-            <List>{secondaryListItems}</List>
+            <List><DebugLogList header="Recent Debug Logs"/></List>
           </OurDrawer>
           <Box
             component="main"

@@ -4,11 +4,10 @@ import { Dashboard } from "./views/Dashboard";
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import BluetoothSearchingIcon from '@mui/icons-material/BluetoothSearching';
 import { Devices } from "./views/Devices"
-import Updater from "./views/Updater";
 import { DrawerContentType } from "./controllers/DashboardController";
 import WSClient from "./views/WSClient";
 import { HardwareSharp, TableRowsSharp } from "@mui/icons-material";
-import { DE1Info } from "./views/DE1Info";
+import { DE1Info } from "./views/DE1Info"
 import { UserMenu } from "./views/UserMenu";
 
 interface AppProps {
@@ -30,7 +29,7 @@ type T_DrawerItem = [string, any, T_DrawerContent[]];
 const draweritems: T_DrawerItem[] = [
   ["Firmware", <HardwareSharp />,
     [
-      ["Updater", <Updater />, false]
+      ["WSClient", <WSClient name="wsc_BLE0"/>, true]
     ]
   ],
   ["Status", <DashboardIcon />,

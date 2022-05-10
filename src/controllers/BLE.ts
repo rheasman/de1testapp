@@ -1,8 +1,8 @@
-import { RepeatOneSharp } from '@mui/icons-material';
-import { StringifyingMap } from '../components/StringifyingMap';
+import { StringifyingMap } from '../components/StringifyingMap'
 import KeyStore from '../models/KeyStore'
-import { T_DeviceState, T_ConnectionState, T_Request, T_IncomingMsg, T_ScanResult, MessageMaker, T_GATTNotifyResults, T_Response, T_Update, T_UpdateGATTNotify, T_Base64String } from './MessageMaker';
+import { T_DeviceState, T_ConnectionState, T_Request, T_IncomingMsg, T_ScanResult, MessageMaker, T_Results_GATTNotify, T_Response, T_Update, T_UpdateGATTNotify, T_Base64String, T_ErrorDesc, T_ConnectionStateNotify } from './MessageMaker';
 import { WSClientController, WSState } from './WSClient'
+import { FullOption, SimpleOption, SuccessOption } from "../Option"
 
 export class DeviceMap extends StringifyingMap<string, T_DeviceState> {
   protected stringifyKey(key: string): string {
@@ -16,22 +16,37 @@ export class ConnMap extends StringifyingMap<string, T_ConnectionState> {
   }
 }
 
-export interface I_BLEResponseCallback {
+export type T_FullResponseOption = FullOption<T_Response, T_ErrorDesc>;
+
+export interface I_BLEIncomingMsgCallback {
   // Return true if more callbacks are expected.
   // Return false to make the BLE class forget about this id and callback
   // Forgetting to return false will leak memory
   (request : T_Request, response : T_IncomingMsg) : boolean;
 };
 
+export interface I_BLEResponseCallback {
+  // Return true if more callbacks are expected.
+  // Return false to make the BLE class forget about this id and callback
+  // Forgetting to return false will leak memory
+  (request : T_Request, response : T_FullResponseOption) : boolean;
+};
+
 export interface I_BLEUpdateCallback {
   // Return true if more callbacks are expected.
   // Return false to make the BLE class forget about this callback
-  (update : T_IncomingMsg) : boolean;
+  (update : T_Update) : boolean;
 };
+
+export interface I_ConnectionStateCallback {
+  // Return true if more callbacks are expected.
+  // Return false to make the BLE class forget about this callback
+  (request : T_Request, update : T_ConnectionStateNotify) : boolean;
+}
 
 type IDBundle = {
   req : T_Request;
-  cb  : I_BLEResponseCallback;
+  cb  : I_BLEIncomingMsgCallback;
 }
 
 type T_NotifyKey = {
@@ -92,6 +107,7 @@ class MMRNotifyMap extends StringifyingMap<MMRAddress, MMRCallback> {
 /**
  * Class to handle a BLE interface.
  * 
+ * TODO: replace all exceptions with Result from the neverthrow library
  */
 export class BLE  {
   SeenDevices : DeviceMap = new DeviceMap(); // Seen BLE devices
@@ -107,7 +123,7 @@ export class BLE  {
   WSC  : WSClientController;
   WSCName : string;
   MMRMap : MMRNotifyMap = new MMRNotifyMap();
-  PendingMMRReads : MMRReadReq[] = [];
+  PendingMMRReads : MMRReadReq[];
 
   MAX_ID = 1000000000;
 
@@ -123,6 +139,34 @@ export class BLE  {
     return this.WSC.getReadyState() === WebSocket.OPEN;
   }
 
+  static asUpdate(msg : T_IncomingMsg) : SimpleOption<T_Update> {
+    if (msg.type === "UPDATE") {
+      return { success: true, result : msg as T_Update }
+    }
+
+    return { success: false };
+  }
+
+  static asResponseOption(msg : T_IncomingMsg) : T_FullResponseOption {
+    console.log("asResponse: ", msg)
+    if (msg.type === "RESP") {
+      return { success: true, result: msg as T_Response}
+    }
+
+    return { success: false, error: msg.results as T_ErrorDesc}
+  }
+
+  // Convert a I_BLEIncomingMsgCallback to I_BLEResponseCallback
+  static _makeResponseTrampoline( callback : I_BLEResponseCallback) {
+    const trampoline = (request: T_Request, msg : T_IncomingMsg): boolean => {
+      callback(request, BLE.asResponseOption(msg))
+
+      return false;
+    }
+
+    return trampoline
+  }
+
   _forget(id: number) {
     if (this.SentMap.has(id)) {
       this.SentMap.delete(id); // Forget association with this request
@@ -130,6 +174,7 @@ export class BLE  {
   }
 
   _sendAsJSON(thing: T_Request) {
+    console.log("_sendAsJSON: ", thing);
     this.WSC.send(JSON.stringify(thing));
   }
 
@@ -137,9 +182,15 @@ export class BLE  {
     console.log("BLE._onmessage:", event);
     const data : T_IncomingMsg = this.MM.makeIncomingMsgFromJSON(event["data"]);
 
+    // If there's a chance we could now trigger a new read, do so.
+    if (this.PendingMMRReads.length > 0) {
+      setTimeout(this._procPendingMMRReads, 0);
+    }
+    
     if (data.id === 0) {
       // This is an unsolicted update
       // Usually a disconnect notification
+      console.log("BLE", 'Unsolicited update: ', data);
       return this._handleUnsolicitedUpdate(data);
     }
 
@@ -150,7 +201,7 @@ export class BLE  {
       return false;
     }
 
-    console.log("BLE", data);
+    console.log("BLE: calling back:", bundle, data);
     try {
       const keepmapping = bundle.cb(bundle.req, data);
       if (!keepmapping) {
@@ -180,11 +231,11 @@ export class BLE  {
   // Handle updates from the other side that have an id of zero.
   // This means that they are not a direct response to a request.
   // So, notifies and disconnections.
-  _handleUnsolicitedUpdate(update : T_IncomingMsg) : boolean {
+  _handleUnsolicitedUpdate = (update : T_IncomingMsg) : boolean => {
     if (update.type === "UPDATE") {
       if (update.update === "GATTNotify") {
         // A GATT Characteristic changed. Notify if someone cares.
-        const notify : T_GATTNotifyResults = update.results as T_GATTNotifyResults;
+        const notify : T_Results_GATTNotify = update.results as T_Results_GATTNotify;
         const key = { MAC : notify.MAC, Char : notify.Char } as T_NotifyKey;
         const callback = this.NotifyCallbackMap.get(key);
         if (callback !== undefined) {
@@ -199,7 +250,7 @@ export class BLE  {
    * Increment the ID we use to generate BLE packet requests
    */
 
-  incId() : number {
+  incId = () : number => {
     let id = this.LastID + 1;
     if (id > this.MAX_ID) {
       this.LastID = 1
@@ -269,7 +320,7 @@ export class BLE  {
    * Returns when the scan is done. "DeviceSet" in the KeyStore will be up to date,
    * or read this.Devices.
    */
-  async requestScan(timeout : number) {
+  requestScan = async (timeout : number) => {
     return new Promise<string>((resolve, reject) => {
 
       const id = this.incId();
@@ -318,7 +369,7 @@ export class BLE  {
 
   // Accept a request, fill in a real ID, set up the callback map (SentMap),
   // convert to JSON and send.
-  _sendRequest(reqtosend: T_Request, callback: I_BLEResponseCallback) {
+  _sendRequest(reqtosend: T_Request, callback: I_BLEIncomingMsgCallback) {
     const id = this.incId();
     reqtosend.id = id;
     this.SentMap.set(id, {req: reqtosend, cb: callback});
@@ -354,13 +405,14 @@ export class BLE  {
    * @param mac MAC address of server, eg "20:C3:8F:E3:B6:A3"
    * @param callback Function to call back with the result
    */
-  requestGATTConnect(mac : string, callback : I_BLEResponseCallback) {
+  requestGATTConnect = (mac : string, callback : I_ConnectionStateCallback) => {
     const conncb = (request: T_Request, response: T_IncomingMsg): boolean => {
       // We proxy the callback so we can update our list of connected devices.
-      let update = this.MM.connStateFromUpdate(this.MM.updateFromMsg(response));
-      this._updateConnState(update.MAC, update.CState);
-      console.log("BLE: requestGATTConnect response:", update)
-      callback(request, response);
+      const update = this.MM.updateFromMsg(response)
+      let connstate = this.MM.connStateFromUpdate(update);
+      this._updateConnState(connstate.MAC, connstate.CState);
+      console.log("BLE: requestGATTConnect response:", connstate)
+      callback(request, connstate);
       return false;
     }    
     this._sendRequest(this.MM.makeConnect(mac, 0), conncb);
@@ -378,13 +430,13 @@ export class BLE  {
    * @param mac MAC address of server, eg "20:C3:8F:E3:B6:A3"
    * @param callback Function to call back with the result
    */
-  requestGATTDisconnect(mac : string, callback : I_BLEResponseCallback) {
+  requestGATTDisconnect = (mac : string, callback : I_ConnectionStateCallback) => {
     const disconncb = (request: T_Request, response: T_IncomingMsg): boolean => {
       // We proxy the callback so we can update our list of disconnected devices.
-      let update = this.MM.connStateFromUpdate(this.MM.updateFromMsg(response));
-      this._updateConnState(update.MAC, update.CState);
-      console.log("BLE: requestGATTDisconnect response:", update)
-      callback(request, response);
+      let connstate = this.MM.connStateFromUpdate(this.MM.updateFromMsg(response));
+      this._updateConnState(connstate.MAC, connstate.CState);
+      console.log("BLE: requestGATTDisconnect response:", connstate)
+      callback(request, connstate);
       return false;
     }    
     this._sendRequest(this.MM.makeDisconnect(mac, 0), disconncb);
@@ -396,10 +448,11 @@ export class BLE  {
    * @param mac MAC address
    * @param char Characteristic to write
    * @param data Data to write (should just be the size of the characteristic, for now)
+   * @param requireresponse Set true if Bluetooth should guarantee the delivery of the transaction (requires the other side to acknowledge the write)
    * @param callback Callback to call with response. Return false from callback.
    */
-     requestGATTWrite(mac : string, char : string, data : Buffer, callback : I_BLEResponseCallback) {
-      this._sendRequest(this.MM.makeGATTWrite(mac, char, data, 0), callback);
+     requestGATTWrite = (mac : string, char : string, data : Buffer, requireresponse: boolean, callback : I_BLEResponseCallback) => {   
+      this._sendRequest(this.MM.makeGATTWrite(mac, char, data, 0, requireresponse), BLE._makeResponseTrampoline(callback));
     }
 
    /**
@@ -407,24 +460,22 @@ export class BLE  {
    * 
    * @param mac MAC address
    * @param char Characteristic to write
-   * @param readlen Number of bytes to write (should just be the size of the characteristic, for now)
+   * @param data Data to write (should just be the size of the characteristic, for now)
+   * @param requireresponse Set true if Bluetooth should guarantee the delivery of the transaction (requires the other side to acknowledge the write)
    * @returns T_IncomingMsg, which is the result of your request.
    * 
-   * TODO: Should perhaps make this throw an exception if the response is an error, instead of just
-   * returning it? Confused as I'm told to throw a new Error() and there's no nice way to include
-   * the actual error in the response.
    */
-  async requestAsyncGATTWrite(mac : string, char : string, readlen : number) : Promise<T_IncomingMsg> {
-    return new Promise<T_IncomingMsg>((resolve, reject) => {
-      const blecb = (request : T_Request, response : T_IncomingMsg): boolean => {
-        resolve(response);
+  requestAsyncGATTWrite = async (mac : string, char : string, data : Buffer, requireresponse : boolean) : Promise<FullOption<T_Response, T_ErrorDesc>> => {
+    return new Promise<FullOption<T_Response, T_ErrorDesc>>((resolve, reject) => {
+      const blecb = (request : T_Request, msg : T_FullResponseOption): boolean => {
+        resolve(msg);
         return false;
       }
 
-      this.requestGATTRead(mac, char, readlen, blecb);
+      this.requestGATTWrite(mac, char, data, requireresponse, blecb);
     })
   }
-
+    
   /**
    * Do a callback read from a GATT device
    * 
@@ -433,8 +484,8 @@ export class BLE  {
    * @param readlen Number of bytes to read (should just be the size of the characteristic, for now)
    * @param callback Callback to call with response. Return false from callback.
    */
-  requestGATTRead(mac : string, char : string, readlen : number, callback : I_BLEResponseCallback) {
-    this._sendRequest(this.MM.makeGATTRead(mac, char, readlen, 0), callback);
+  requestGATTRead = (mac : string, char : string, readlen : number, callback : I_BLEResponseCallback) => {
+    this._sendRequest(this.MM.makeGATTRead(mac, char, readlen, 0), BLE._makeResponseTrampoline(callback));
   }
 
   /**
@@ -445,16 +496,17 @@ export class BLE  {
    * @param readlen Number of bytes to read (should just be the size of the characteristic, for now)
    * @returns T_IncomingMsg, which is the result of your request.
    */
-  async requestAsyncGATTRead(mac : string, char : string, readlen : number) : Promise<T_IncomingMsg> {
-    return new Promise<T_IncomingMsg>((resolve, reject) => {
-      const blecb = (request : T_Request, response : T_IncomingMsg): boolean => {
-        resolve(response);
+  requestAsyncGATTRead = async (mac : string, char : string, readlen : number) : Promise<FullOption<T_Response, T_ErrorDesc>> => {
+    return new Promise<FullOption<T_Response, T_ErrorDesc>>((resolve, reject) => {
+      const blecb = (request : T_Request, response : T_FullResponseOption): boolean => {
+        resolve(response)
         return false;
       }
 
       this.requestGATTRead(mac, char, readlen, blecb);
     })
   }
+
 
   /**
    * Request a notification from a GATT Characteristic on a device
@@ -469,22 +521,52 @@ export class BLE  {
    * 
    * Throws an error if you attempt to enable a notify twice. Disable twice is ignored.
    */
-  requestGATTSetNotify(mac : string, char : string, enable : boolean, respcallback: I_BLEResponseCallback, upcallback : I_BLEUpdateCallback) {
+  requestGATTSetNotify = (mac : string, char : string, enable : boolean, respcallback: I_BLEResponseCallback, upcallback : I_BLEUpdateCallback) => {
     const key : T_NotifyKey = { MAC : mac, Char : char} as T_NotifyKey;
     
+    const trampoline = BLE._makeResponseTrampoline(respcallback)
+
     if (enable) {
-      if (this.NotifyCallbackMap.has(key)) {
-        // Key already exists, so complain
-        throw new Error(`There is already a notify callback for ${key.MAC + key.Char}`);
-      }
+      // if (this.NotifyCallbackMap.has(key)) {
+      //   // Key already exists, so complain
+      //   throw new Error(`There is already a notify callback for ${key.MAC + key.Char}`);
+      // }
       this.NotifyCallbackMap.set(key, upcallback);
-      this._sendRequest(this.MM.makeGATTSetNotify(mac, char, enable, 0), respcallback);
+      this._sendRequest(this.MM.makeGATTSetNotify(mac, char, enable, 0), trampoline);
     } else {
       if (this.NotifyCallbackMap.has(key)) {
-        this._sendRequest(this.MM.makeGATTSetNotify(mac, char, enable, 0), respcallback);
+        this._sendRequest(this.MM.makeGATTSetNotify(mac, char, enable, 0), trampoline);
         this.NotifyCallbackMap.delete(key)      
       }
     }
+  }
+
+/**
+ * Request a notification from a GATT Characteristic on a device.
+ * 
+ * This is just like requestGATTSetNotify, but is async, and throws an
+ * exception if the attempt to set the notify fails, instead of requiring you to
+ * set a callback.
+ * 
+ * Requesting a disable will cause the callback to be forgotten.
+ * 
+ * @param mac MAC address of device
+ * @param char Characteristic to notify on
+ * @param enable Enable or disable the notify
+ * @param upcallback Callback to call when notifies come in, in future.
+ * 
+ * Throws an error if you attempt to enable a notify twice. Disable twice is ignored.
+ */
+  requestAsyncGATTSetNotify = async (mac : string, char : string, enable : boolean, upcallback : I_BLEUpdateCallback) : Promise<FullOption<T_Response, T_ErrorDesc>> => {
+    return new Promise<FullOption<T_Response, T_ErrorDesc>>((resolve, reject) => {
+      const respcallback : I_BLEResponseCallback = (request : T_Request, msg : T_FullResponseOption) : boolean => {
+        resolve(msg)
+
+        return false;  
+      }
+
+      this.requestGATTSetNotify(mac, char, enable, respcallback, upcallback);
+    })
   }
 
   // This is a DE1 specific BLE request. Decided that I'd put it here, even though it's not
@@ -495,21 +577,12 @@ export class BLE  {
    * MMR reads for you, to a DE1.
    * 
    * @param mac MAC address of a DE1
-   * 
-   * Throws the response if the response is an error.
+   * @returns  
    */
-  async setUpForMMRReads(mac: string) : Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      const respcallback : I_BLEResponseCallback = (request : T_Request, response : T_IncomingMsg) : boolean => {
-        if (response.type === "RESP") {
-          const resp = response as T_Response;
-          if (resp.error.eid == 0) {
-            resolve();    
-            return false;
-          }
-        }
-
-        reject(response);
+  setUpForMMRReads = async (mac: string) : Promise<SuccessOption<T_ErrorDesc>> => {
+    return new Promise<SuccessOption<T_ErrorDesc>>((resolve, reject) => {
+      const respcallback : I_BLEResponseCallback = (request : T_Request, response : T_FullResponseOption) : boolean => {
+        resolve(response);
         return false;  
       }
 
@@ -561,6 +634,12 @@ export class BLE  {
 
       console.log(`_locallMMRUpdateCB(${mac}, ${msg}):`, res);
     }
+    
+    // If there's a chance we could now trigger a new read, do so.
+    if (this.PendingMMRReads.length > 0) {
+      setTimeout(this._procPendingMMRReads, 0);
+    }
+
     return true;
   }
 
@@ -569,6 +648,7 @@ export class BLE  {
   // Look to see if we have any MMR reads we could do
   // Returns true if it pulled a read out of the queue
   _procPendingMMRRead = () : boolean => {
+    console.log("_procPendingMMRRead length: ", this.PendingMMRReads.length);
     const oldestitem = this.PendingMMRReads.at(0);
     if (oldestitem) {
       const key = { MAC: oldestitem.mac, Addr: oldestitem.mmraddress };
@@ -578,31 +658,28 @@ export class BLE  {
         // have the address to key on.
         this.PendingMMRReads.shift(); // Discard from queue
         const item = oldestitem;
-        const blecb = (request : T_Request, response : T_IncomingMsg): boolean => {
+        const blecb = (request : T_Request, response : T_FullResponseOption): boolean => {
+          console.log("blecb: ", request, response)
           // If the write succeeded 
-          if (response.type === "RESP") {
-            const resp = response as T_Response;
-            if (resp.error.eid === 0) {
+          if (response.success) {
               // Success, add notify to map, for response
-              this.MMRMap.set({ MAC: item.mac, Addr: item.mmraddress }, item.callback);
-            } else {
-              // Something went wrong, so return error to callback
+              // (this is now redundant, as we add it below)
+              // this.MMRMap.set({ MAC: item.mac, Addr: item.mmraddress }, item.callback);
+          } else {
+              // Something went wrong, so return error to callback, delete MMR callback entry
+              this.MMRMap.delete({ MAC: item.mac, Addr: item.mmraddress })
               item.callback(false, item.mac, item.wordlen, item.mmraddress, null);
-            }
           }
 
-          // If there's a chance we could now trigger a new read, do so.
-          // Note that we are still in the callback. Every finished MMR Read triggers
-          // the chance that we could start a new one.
-          if (this.PendingMMRReads.length > 0) {
-            this._procPendingMMRReads();
-          }
+          setTimeout(this._procPendingMMRReads, 1);
           return false;
         }
 
         var data = BLE._packMMRRead(item.wordlen, item.mmraddress);
         // Do the GATT write that will trigger a notify callback
-        this.requestGATTWrite(item.mac, BLE.MMRReadChar, data, blecb);
+        // Apparently we can get the notify before the response comes back, so record the callback now.
+        this.MMRMap.set({ MAC: item.mac, Addr: item.mmraddress }, item.callback);
+        this.requestGATTWrite(item.mac, BLE.MMRReadChar, data, true, blecb);
         return true; 
       }
     }
@@ -613,6 +690,7 @@ export class BLE  {
   // This method reads as many as possible pending MMR requests out of the queue and sends them.
   _procPendingMMRReads = () => {
     do {
+      console.log("PendingMMRReads:", this.PendingMMRReads.length);
       var didread = this._procPendingMMRRead()
     } while (didread);
   }
@@ -624,15 +702,23 @@ export class BLE  {
    * @param wordlen Number of words to read
    * @param callback MMRCallback to call when we have data
    */
-  requestMMRRead(mac: string, mmraddress : number, wordlen : number, callback : MMRCallback) {
+  requestMMRRead = (mac: string, mmraddress : number, wordlen : number, callback : MMRCallback) => {
+    console.log("requestMMRRead");
     const key : T_NotifyKey = { MAC : mac, Char : BLE.MMRReadChar} as T_NotifyKey;
   
     if (!this.NotifyCallbackMap.has(key)) {
       throw new Error("Call setUpForMMRReads() once first, to enable MMR reads");
     }
 
+    const readreq : MMRReadReq = {
+      mac, mmraddress, wordlen, callback
+    }
+
     // Put the MMR read request on the pending queue.
-    this.PendingMMRReads.push( {mac, mmraddress, wordlen, callback} )
+    const len = this.PendingMMRReads.push(readreq);
+    console.log("PendingMMRReads len:", len);
+
+    console.log("requestMMRRead pushed read: ", this.PendingMMRReads);
     // Now pick reads off the queue
     this._procPendingMMRReads();
   }
@@ -645,7 +731,8 @@ export class BLE  {
    * @param wordlen Number of words to read
    * @returns MMRReadResponse 
    */
-  async requestAsyncMMRRead(mac: string, mmraddress : number, wordlen : number) {
+  requestAsyncMMRRead = async (mac: string, mmraddress : number, wordlen : number, ) => {
+    console.log("requestAsyncMMRRead");
     return new Promise<MMRReadResponse>( (resolve, reject) => {
       const mmrcb : MMRCallback = (success, mac, wordlen, addr, payload) => {
         if (success && (payload !== null)) {
@@ -679,6 +766,7 @@ export class BLE  {
 
   constructor(name: string, url: string){
     console.log("BLE.constructor(%s, %s)", name, url);
+    this.PendingMMRReads = [];
     this.LastID = 1;
     this.MM = new MessageMaker();    
     this.URL = url;

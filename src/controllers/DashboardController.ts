@@ -1,4 +1,4 @@
-import { Dashboard } from "../views/Dashboard";
+import { Dashboard } from "../views/Dashboard"
 
 export interface DrawerContentType {
   name : string,
@@ -40,7 +40,7 @@ export class DashboardController {
   }
 
   findDrawer(name: string): DrawerType | undefined {
-    var d = this.drawers.find((val: DrawerType): boolean => { return val.name === name })
+    var d = this.drawers.find((val: DrawerType): boolean => { return val.name == name })
     return d;
   }
 
@@ -91,7 +91,6 @@ export class DashboardController {
 
   setItemVisible(name : string, drawername: string, visible: boolean) {
     var drawer: DrawerType|undefined = this.findDrawer(drawername);
-
     if (drawer === undefined) return;
 
     drawer.contents.forEach(element => {

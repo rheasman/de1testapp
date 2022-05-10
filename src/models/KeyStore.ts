@@ -37,7 +37,7 @@ type NotifyOwnerDictType = Map<string, NotifyItemType>
  *    You DO NOT have to register a notify in order to be able to read a key.
  * 2. Every change of a key generates a callback, so be cautious about doing too much work on a callback.
  *    Ideally, rather use a key that is updated sparingly, when major state changes occur, and only notify on that.
- * 3. When your component unmounts/disappears, be sure to cancelNotify90 on all keys.
+ * 3. When your component unmounts/disappears, be sure to cancelNotify() on all keys.
  * 
  * If you 'own' some keys:
  * 1. When your component mounts/is created, call updateKey() to create the key.
@@ -134,7 +134,7 @@ export class KeyStore  {
    * the callbacks will be called. This does not do deep comparison of objects,
    * so use 'forcenotify' if necessary.
    * 
-   * NB: SHOULD ONLY BE USED BY THE OWNER. The keystore is not supposed to be
+   * NB: THIS FUNCTION SHOULD ONLY BE USED BY THE OWNER. The keystore is not supposed to be
    * a big global variable. Owners change things, and everyone else watches.
    */
   updateKey(ownername: string, key: string, newvalue: any, forcenotify?: boolean) {

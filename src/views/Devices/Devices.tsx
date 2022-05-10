@@ -8,17 +8,18 @@ import TableRow from '@mui/material/TableRow';
 import Title from '../Title';
 import { E_Status, NotifyCallbackType } from '../../models/KeyStore';
 import KeyStore from '../../models/KeyStore';
-import { I_BLEResponseCallback, DeviceMap } from '../../controllers/BLE';
-import { T_IncomingMsg, T_Request, T_ConnectionState } from "../../controllers/MessageMaker";
+import { I_BLEResponseCallback, DeviceMap, I_ConnectionStateCallback } from '../../controllers/BLE';
+import { T_IncomingMsg, T_Request, T_ConnectionState, T_ConnectionStateNotify } from "../../controllers/MessageMaker";
 import { ConnectWithoutContactSharp, DoNotDisturbOnSharp, RadarSharp, BluetoothConnectedSharp } from '@mui/icons-material';
-import { Box, CircularProgress, IconButton, Stack } from '@mui/material';
+import { Box, Button, CircularProgress, IconButton, Stack } from '@mui/material';
 import { AppController, T_AppMachineState } from '../../controllers/AppController';
 import "./Devices.css";
+import { timeStamp } from 'console';
 
 type RowDataType = {
   addr : string,
   name : string,
-  cstate : T_ConnectionState
+  cstate : T_ConnectionState,
 }
 
 function row_compare(a: RowDataType, b: RowDataType): number {
@@ -31,6 +32,7 @@ function row_compare(a: RowDataType, b: RowDataType): number {
 type MyState = {
   rows : RowDataType[];
   allowConnect : boolean;
+  connecting : boolean
 }
 
 type MyProps = {
@@ -46,7 +48,8 @@ export class Devices extends Component<MyProps, MyState> {
     console.log("props:", props);
     this.state = {
       rows : [this.createData("","", "DISCONNECTED")],
-      allowConnect : false
+      allowConnect : false,
+      connecting : false
     }
     console.log("this.state:", this.state);
   }
@@ -54,7 +57,7 @@ export class Devices extends Component<MyProps, MyState> {
   componentDidMount() {
     KeyStore.getInstance().requestNotifyOnChanged(this.props.name, "DeviceSet", this.onDeviceChange)
     KeyStore.getInstance().requestNotifyOnChanged("AppController", "AppMachineState", this.onStateChange)
-    this.setState({rows : this.rowsFromStore(), allowConnect: false})
+    this.setState({rows : this.rowsFromStore(), allowConnect: false, connecting: false})
   }
 
   componentWillUnmount() {
@@ -66,9 +69,9 @@ export class Devices extends Component<MyProps, MyState> {
     console.log("onStateChange:", owner, key, status, before, after)
 
     if (after === "SelectDE1") {
-      this.setState({allowConnect : true})
+      this.setState({allowConnect : true, connecting : false})
     } else {
-      this.setState({allowConnect : false})
+      this.setState({allowConnect : false, connecting : false})
     }
   }
 
@@ -121,8 +124,8 @@ export class Devices extends Component<MyProps, MyState> {
 
   disconnect(name : string, addr : string) {
     console.log("Device onClick() disconnect from ", name, addr)
-    const discb : I_BLEResponseCallback = (request : T_Request, response : T_IncomingMsg) : boolean => {
-      console.log("Devices: Disconnect: ", response)
+    const discb : I_ConnectionStateCallback = (request : T_Request, constate : T_ConnectionStateNotify) : boolean => {
+      console.log("Devices: Disconnect: ", constate)
       return false;
     }
     AppController.BLE0.requestGATTDisconnect(addr, discb);
@@ -130,20 +133,22 @@ export class Devices extends Component<MyProps, MyState> {
   
   connect(name : string, addr : string) {
     console.log("Device onClick() connect to ", name, addr)
-    AppController.getInstance().requestConnect(addr);
+    AppController.getInstance().requestConnect(name, addr)
+    this.setState({connecting : true})
   }
 
-  connectIcon(name : string, addr : string, cstate : T_ConnectionState): JSX.Element {
+  connectIcon(row : RowDataType): JSX.Element {
     var buttonstyle={width: '24px', height: '24px', margin: '5px'};
+    
 
-    if (name === "DE1") {
-      if (cstate !== "CONNECTED") {
-        if (this.state.allowConnect) {
+    if (row.name === "DE1") {
+      if (row.cstate !== "CONNECTED") {
+        if (this.state.allowConnect && !this.state.connecting) {
           // A button that allows connecting
           return (
             <TableCell>
               <div className="cell-button">
-                <IconButton onClick={ () => {this.connect(name, addr)} }>
+                <IconButton onClick={ () => {this.connect(row.name, row.addr)} }>
                   <ConnectWithoutContactSharp />
                 </IconButton>
               </div>
@@ -151,7 +156,7 @@ export class Devices extends Component<MyProps, MyState> {
           )    
         } else {
           return (
-            // A button that shows we are not ready to connect
+            // A button that shows we are not ready to connect or that we are connecting
             <TableCell>
               <div className="cell-button" >
                 <CircularProgress style={buttonstyle}/>
@@ -164,7 +169,7 @@ export class Devices extends Component<MyProps, MyState> {
           // A button that shows we are connected
           <TableCell>
             <div className="cell-button">
-              <IconButton onClick={ () => {this.disconnect(name, addr)} } style={buttonstyle}>
+              <IconButton onClick={ () => {this.disconnect(row.name, row.addr)} } style={buttonstyle}>
                 <BluetoothConnectedSharp/>
               </IconButton>
             </div>    
@@ -173,6 +178,7 @@ export class Devices extends Component<MyProps, MyState> {
       }
     } else {
       return (
+        // A button that says we can't connect
         <TableCell>
           <div className="cell-button">        
             <IconButton style={buttonstyle}>
@@ -185,7 +191,6 @@ export class Devices extends Component<MyProps, MyState> {
   }
 
   reqScan() {
-    // AppController.BLE0.requestScanWithCallbacks(6, null);
     AppController.getInstance().sendEventToSM({type: "EV_ReqScan"});
   }
 
@@ -194,13 +199,15 @@ export class Devices extends Component<MyProps, MyState> {
     
     if (this.state.allowConnect) {
       scan = (
-        <div className='scan'>
-          <IconButton onClick={this.reqScan}><RadarSharp />Scan</IconButton>
-        </div>
+        <Stack sx={{pt:2}} direction='row' className='scan-box'>
+          <Button variant="contained" size="medium" startIcon={<RadarSharp />} onClick={this.reqScan}>Scan</Button>
+        </Stack>
       )
     } else {
       scan = (
-        <CircularProgress /> // style={{width: '30px', height: '30px', margin: '5px'}}/>
+        <Stack sx={{pt:2}} direction='row' className='scan-box'>
+          <Button disabled variant="contained" size="medium" startIcon={<RadarSharp />} onClick={this.reqScan}>Scan</Button>
+        </Stack>
       )
     };
 
@@ -220,7 +227,7 @@ export class Devices extends Component<MyProps, MyState> {
               <TableRow key={row.addr}>
                 <TableCell>{row.name}</TableCell>
                 <TableCell>{row.addr}</TableCell>
-                {this.connectIcon(row.name, row.addr, row.cstate)}
+                {this.connectIcon(row)}
               </TableRow>
             ))}
           </TableBody>

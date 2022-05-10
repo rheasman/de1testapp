@@ -1,26 +1,70 @@
+import { encode, decode } from "base64-arraybuffer";
 
-export type T_MsgType = "REQ" | "RESP" | "UPDATE";
+export type T_MsgType_REQ = "REQ";
+export type T_MsgType_RESP = "RESP";
+export type T_MsgType_UPDATE = "REQ";
+export type T_MsgType = T_MsgType_REQ | T_MsgType_RESP | T_MsgType_UPDATE;
 export type T_ConnectionState = "INIT" | "DISCONNECTED" | "CONNECTED" | "CANCELLED";
-export type T_ReqCommand = "Scan" | "GATTConnect" | "GATTDisconnect" | "GATTRead" | "GATTSetNotify" | "GATTWrite";
+export type T_ReqCommandStr = "Scan" | "GATTConnect" | "GATTDisconnect" | "GATTRead" | "GATTSetNotify" | "GATTWrite";
 export type T_Base64String = string;
 export type T_Request = {
-  type: "REQ"; // T_MsgType
-  command: T_ReqCommand;
+  type: T_MsgType_REQ;
+  command: T_ReqCommandStr;
   params: any;
   id: number;
 };
 
-export type T_RespError = {
+export type T_Params_Scan = {
+  Timeout: number;
+}
+
+export type T_Params_GATTConnect = {
+  'MAC': string
+}
+
+export type T_Params_GATTDisconnect = {
+  'MAC': string
+}
+
+export type T_Params_GATTRead = {
+  
+}
+
+export type T_Request_Scan = {
+  type: T_MsgType_REQ;
+  command: "Scan";
+  params: T_Params_Scan;
+  id: number;
+}
+
+export type T_ErrorDesc = {
   eid: number;
   errmsg: string;
 };
 
+export type T_RespNoError = {
+  eid : 0;
+  errmsg: "";
+}
+
 export type T_Response = {
   type: "RESP"; // T_MsgType
   id: number;
-  error: T_RespError;
+  error: T_ErrorDesc;
   results: any;
 };
+
+export type T_Results_GATTRead = {
+  Data : T_Base64String;
+}
+
+export type T_Response_GATTRead = {
+  type: "RESP"; // T_MsgType
+  id: number;
+  error: T_ErrorDesc;
+  results: T_Results_GATTRead;
+};
+
 // A result from an ongoing BLE scan
 
 export type T_ScanResult = {
@@ -30,7 +74,7 @@ export type T_ScanResult = {
 };
 // A notify that we subscribed to has delivered some data
 
-export type T_GATTNotifyResults = {
+export type T_Results_GATTNotify = {
   MAC: string;
   Char: string;
   Data: T_Base64String;
@@ -45,12 +89,8 @@ export type T_ConnectionStateNotify = {
 };
 // Used to report any runtime errors that occurred in the server
 
-export type T_ExecutionError = {
-  Error: String;
-};
-
 export type T_UpdateType = "ScanResult" | "GATTNotify" | "ConnectionState" | "ExecutionError";
-export type T_UpdateResult = T_ScanResult | T_GATTNotifyResults | T_ConnectionStateNotify | T_ExecutionError;
+export type T_UpdateResult = T_ScanResult | T_Results_GATTNotify | T_ConnectionStateNotify | T_ErrorDesc;
 export type T_Update = {
   type: "UPDATE"; // T_MsgType
   id: number;
@@ -62,7 +102,7 @@ export type T_UpdateGATTNotify = {
   type: "UPDATE"; // T_MsgType
   id: number;
   update: "GATTNotify";
-  results: T_GATTNotifyResults;
+  results: T_Results_GATTNotify;
 };
 
 export type T_IncomingMsg = T_Response | T_Update;
@@ -83,7 +123,7 @@ export type T_DeviceState = {
  */
 
 export class MessageMaker {
-  makeReq(command: T_ReqCommand, rid: number, params: any): T_Request {
+  makeReq(command: T_ReqCommandStr, rid: number, params: any): T_Request {
     return {
       type: 'REQ',
       command: command,
@@ -123,11 +163,12 @@ export class MessageMaker {
     return this.makeReq("GATTRead", rid, params);
   }
 
-  makeGATTWrite(mac: string, char: string, data: Buffer, rid: number) {
+  makeGATTWrite(mac: string, char: string, data: ArrayBufferLike, rid: number, requireresponse : boolean) {
     const params = {
       'MAC': mac,
       'Char': char,
-      'Data': data.toString("base64")
+      'Data': encode(data),
+      'RR' : requireresponse
     };
     return this.makeReq("GATTWrite", rid, params);
   }
