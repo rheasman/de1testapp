@@ -107,7 +107,6 @@ class MMRNotifyMap extends StringifyingMap<MMRAddress, MMRCallback> {
 /**
  * Class to handle a BLE interface.
  * 
- * TODO: replace all exceptions with Result from the neverthrow library
  */
 export class BLE  {
   SeenDevices : DeviceMap = new DeviceMap(); // Seen BLE devices
