@@ -130,7 +130,7 @@ type T_Connection = {
 export class AppController extends AsyncSimpleSM<I_SM_Event, T_AppMachineState>{
   // @ts-expect-error
   private static instance : AppController = AppController.instance || new AppController();
-  static BLE0 = new BLE("BLE0", "ws://192.168.68.67:8765")
+  static BLE0 = new BLE("BLE0", "ws://" + location.hostname + ":8765"); // 192.168.68.67:8765")
   // static BLE0 = new BLE("BLE0", "ws://127.0.0.1:8765")
   public static getInstance() {
       return AppController.instance;
